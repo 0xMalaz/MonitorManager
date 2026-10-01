@@ -41,7 +41,7 @@ The project is backed up in the private GitHub repository [0xMalaz/MonitorManage
 
 For a ready-to-run copy, download `MonitorCenter-Windows-x64.zip` from the [PC backup release](https://github.com/0xMalaz/MonitorManager/releases/tag/pc-backup-2026-10-01) and extract it into a permanent folder, for example `%LOCALAPPDATA%\Programs\MonitorCenter`. The executable is self-contained; running it does not require Git or the .NET SDK.
 
-Before starting the app, restore the included `settings.json` to `%LOCALAPPDATA%\MonitorCenter\settings.json` to retain the profiles and custom display names captured in this backup. Create the destination directory if needed. Monitor identities may change after reinstalling Windows or changing display connections; check the restored profiles against the connected displays.
+Personal settings are not uploaded to GitHub or included in the release archive. Before formatting your PC, copy `%LOCALAPPDATA%\MonitorCenter\settings.json` to a USB drive or another backup location if you want to keep your profiles and custom display names. After reinstalling Windows, restore that file to the same path before starting the app, creating the destination directory if needed. Monitor identities may change after reinstalling Windows or changing display connections; check any restored profiles against the connected displays.
 
 Run `MonitorCenter.exe` from the permanent folder. Its first normal Release launch registers that location for Windows startup; you can change this through the tray menu.
 
@@ -54,7 +54,7 @@ dotnet publish src\MonitorCenter\MonitorCenter.csproj -c Release -r win-x64 --se
 .\dist\MonitorCenter.exe
 ```
 
-Generated files (`dist`, `bin`, `obj`, and `.artifacts`) are intentionally excluded from Git. The release archive preserves the executable and personal settings separately from the source.
+Generated files (`dist`, `bin`, `obj`, and `.artifacts`) are intentionally excluded from Git. The release archive preserves the executable separately from the source; personal settings require your own backup.
 
 ## Build and test
 
