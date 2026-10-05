@@ -12,14 +12,23 @@ internal sealed class MonitorService : IAsyncDisposable
     private Dictionary<string, string> _displayNames = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
-    public async Task<IReadOnlyList<MonitorSnapshot>> DiscoverAsync(CancellationToken cancellationToken = default)
+    /// <param name="reprobeKnownDisplays">
+    /// When false, displays that were already discovered keep their WMI identity and DDC/CI backend instead of
+    /// being queried again; their brightness is still read fresh.
+    /// </param>
+    public async Task<IReadOnlyList<MonitorSnapshot>> DiscoverAsync(
+        bool reprobeKnownDisplays = true,
+        CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 
         try
         {
-            var discovered = await Task.Run(DiscoverCore, cancellationToken).ConfigureAwait(false);
+            IReadOnlyDictionary<string, MonitorEndpoint> known = reprobeKnownDisplays
+                ? new Dictionary<string, MonitorEndpoint>()
+                : _endpoints;
+            var discovered = await Task.Run(() => DiscoverCore(known), cancellationToken).ConfigureAwait(false);
             var snapshots = MonitorLabeler.OrderAndLabel(discovered.Values.Select(endpoint => endpoint.ToSnapshot()));
             var oldEndpoints = _endpoints;
             _endpoints = discovered;
@@ -44,6 +53,7 @@ internal sealed class MonitorService : IAsyncDisposable
     public async Task<BrightnessResult> SetBrightnessAsync(
         string monitorId,
         int percent,
+        BrightnessWriteMode mode = BrightnessWriteMode.Commit,
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -58,7 +68,7 @@ internal sealed class MonitorService : IAsyncDisposable
 
             var requested = Math.Clamp(percent, 0, 100);
             var actual = await Task.Run(
-                    () => endpoint.SetBrightnessAndRead(requested),
+                    () => endpoint.SetBrightness(requested, mode),
                     cancellationToken)
                 .ConfigureAwait(false);
             _displayNames.TryGetValue(monitorId, out var displayName);
@@ -70,10 +80,11 @@ internal sealed class MonitorService : IAsyncDisposable
         }
     }
 
-    private Dictionary<string, MonitorEndpoint> DiscoverCore()
+    private Dictionary<string, MonitorEndpoint> DiscoverCore(IReadOnlyDictionary<string, MonitorEndpoint> known)
     {
-        var metadata = _wmiReader.ReadMetadata();
-        var wmiBrightness = _wmiReader.ReadBrightnessStates();
+        // WMI queries are comparatively expensive, so they run only when a display actually needs them.
+        var metadata = new Lazy<IReadOnlyDictionary<string, WmiMonitorMetadata>>(_wmiReader.ReadMetadata);
+        var wmiBrightness = new Lazy<IReadOnlyDictionary<string, WmiBrightnessState>>(_wmiReader.ReadBrightnessStates);
         var result = new Dictionary<string, MonitorEndpoint>(StringComparer.OrdinalIgnoreCase);
         Exception? callbackFailure = null;
 
@@ -81,7 +92,7 @@ internal sealed class MonitorService : IAsyncDisposable
         {
             try
             {
-                DiscoverLogicalMonitor(monitor, metadata, wmiBrightness, result);
+                DiscoverLogicalMonitor(monitor, known, metadata, wmiBrightness, result);
                 return true;
             }
             catch (Exception exception)
@@ -106,8 +117,9 @@ internal sealed class MonitorService : IAsyncDisposable
 
     private void DiscoverLogicalMonitor(
         IntPtr logicalMonitor,
-        IReadOnlyDictionary<string, WmiMonitorMetadata> metadata,
-        IReadOnlyDictionary<string, WmiBrightnessState> wmiBrightness,
+        IReadOnlyDictionary<string, MonitorEndpoint> known,
+        Lazy<IReadOnlyDictionary<string, WmiMonitorMetadata>> metadata,
+        Lazy<IReadOnlyDictionary<string, WmiBrightnessState>> wmiBrightness,
         IDictionary<string, MonitorEndpoint> result)
     {
         var info = new NativeMethods.MonitorInfoEx
@@ -122,22 +134,36 @@ internal sealed class MonitorService : IAsyncDisposable
 
         var displayDevice = ReadDisplayDevice(info.DeviceName);
         var normalizedInstance = WmiMonitorReader.NormalizeInstanceName(displayDevice.DeviceId);
-        metadata.TryGetValue(normalizedInstance, out var monitorMetadata);
-        wmiBrightness.TryGetValue(normalizedInstance, out var wmiState);
-
-        var friendlyName = monitorMetadata?.FriendlyName;
-        if (string.IsNullOrWhiteSpace(friendlyName) ||
-            string.Equals(friendlyName, "Display", StringComparison.OrdinalIgnoreCase))
-        {
-            friendlyName = !string.IsNullOrWhiteSpace(displayDevice.DeviceString) &&
-                           !displayDevice.DeviceString.Contains("Generic PnP", StringComparison.OrdinalIgnoreCase)
-                ? displayDevice.DeviceString
-                : info.DeviceName;
-        }
-
         var stableBaseId = string.IsNullOrWhiteSpace(normalizedInstance)
             ? info.DeviceName
             : normalizedInstance;
+
+        string friendlyName;
+        string? serial;
+        if (known.TryGetValue(stableBaseId, out var knownDisplay) ||
+            known.TryGetValue($"{stableBaseId}:0", out knownDisplay))
+        {
+            friendlyName = knownDisplay.FriendlyName;
+            serial = knownDisplay.Serial;
+        }
+        else
+        {
+            metadata.Value.TryGetValue(normalizedInstance, out var monitorMetadata);
+            serial = monitorMetadata?.Serial;
+            friendlyName = monitorMetadata?.FriendlyName ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(friendlyName) ||
+                string.Equals(friendlyName, "Display", StringComparison.OrdinalIgnoreCase))
+            {
+                friendlyName = !string.IsNullOrWhiteSpace(displayDevice.DeviceString) &&
+                               !displayDevice.DeviceString.Contains("Generic PnP", StringComparison.OrdinalIgnoreCase)
+                    ? displayDevice.DeviceString
+                    : info.DeviceName;
+            }
+        }
+
+        WmiBrightnessState? ReadWmiState() =>
+            wmiBrightness.Value.TryGetValue(normalizedInstance, out var state) ? state : null;
+
         var bounds = new DesktopBounds(
             info.Monitor.Left,
             info.Monitor.Top,
@@ -150,10 +176,10 @@ internal sealed class MonitorService : IAsyncDisposable
                 result,
                 stableBaseId,
                 friendlyName,
-                monitorMetadata?.Serial,
+                serial,
                 info.DeviceName,
                 bounds,
-                wmiState);
+                ReadWmiState());
             return;
         }
 
@@ -164,10 +190,10 @@ internal sealed class MonitorService : IAsyncDisposable
                 result,
                 stableBaseId,
                 friendlyName,
-                monitorMetadata?.Serial,
+                serial,
                 info.DeviceName,
                 bounds,
-                wmiState);
+                ReadWmiState());
             return;
         }
 
@@ -176,24 +202,43 @@ internal sealed class MonitorService : IAsyncDisposable
             var physical = physicalMonitors[index];
             var handle = new SafePhysicalMonitorHandle(physical.Handle);
             var id = physicalMonitors.Length == 1 ? stableBaseId : $"{stableBaseId}:{index}";
+            var knownBackend = known.TryGetValue(id, out var knownEndpoint)
+                ? knownEndpoint.Backend
+                : BrightnessBackendKind.None;
 
             try
             {
+                // A built-in panel already known to use WMI skips the DDC/CI probe it cannot answer.
+                if (knownBackend == BrightnessBackendKind.WmiInternal && ReadWmiState() is { } knownWmiState)
+                {
+                    handle.Dispose();
+                    result[id] = MonitorEndpoint.CreateWmi(
+                        id,
+                        friendlyName,
+                        serial,
+                        info.DeviceName,
+                        bounds,
+                        _wmiReader,
+                        knownWmiState);
+                    continue;
+                }
+
                 var endpoint = MonitorEndpoint.CreateDdc(
                     id,
                     friendlyName,
-                    monitorMetadata?.Serial,
+                    serial,
                     info.DeviceName,
                     bounds,
-                    handle);
+                    handle,
+                    knownBackend);
 
-                if (endpoint.Status != MonitorSupportStatus.Ready && wmiState is not null)
+                if (endpoint.Status != MonitorSupportStatus.Ready && ReadWmiState() is { } wmiState)
                 {
                     endpoint.Dispose();
                     endpoint = MonitorEndpoint.CreateWmi(
                         id,
                         friendlyName,
-                        monitorMetadata?.Serial,
+                        serial,
                         info.DeviceName,
                         bounds,
                         _wmiReader,

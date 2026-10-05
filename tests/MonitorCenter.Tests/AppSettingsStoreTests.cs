@@ -142,6 +142,33 @@ public sealed class AppSettingsStoreTests
         finally { File.Delete(file); }
     }
 
+    [TestMethod]
+    public async Task Save_UnchangedSettingsDoesNotRewriteFile()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "MonitorCenter.Tests", Guid.NewGuid().ToString("N"));
+        var file = Path.Combine(directory, "settings.json");
+        try
+        {
+            var store = new AppSettingsStore(file);
+            var settings = new AppSettings { Profiles = [CreateProfile("Work", 60)] };
+            await store.SaveAsync(settings);
+
+            var marker = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            File.SetLastWriteTimeUtc(file, marker);
+            await store.SaveAsync(await store.LoadAsync());
+            Assert.AreEqual(marker, File.GetLastWriteTimeUtc(file));
+
+            settings.Profiles[0].Name = "Home";
+            await store.SaveAsync(settings);
+            Assert.AreNotEqual(marker, File.GetLastWriteTimeUtc(file));
+            Assert.AreEqual("Home", (await store.LoadAsync()).Profiles.Single().Name);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static BrightnessProfile CreateProfile(string name, int brightness) => new()
     {
         Name = name,

@@ -64,8 +64,16 @@ internal sealed class MonitorEndpoint : IDisposable
         string? serial,
         string displayDevice,
         DesktopBounds bounds,
-        SafePhysicalMonitorHandle handle)
+        SafePhysicalMonitorHandle handle,
+        BrightnessBackendKind knownBackend = BrightnessBackendKind.None)
     {
+        // A display already known to answer only MCCS VCP 0x10 skips the high-level probe it rejects.
+        if (knownBackend == BrightnessBackendKind.DdcVcp &&
+            TryReadVcpBrightness(handle, out var vcpCurrent, out var vcpMaximum))
+        {
+            return CreateVcp(vcpCurrent, vcpMaximum);
+        }
+
         if (NativeMethods.GetMonitorBrightness(handle, out var minimum, out var current, out var maximum) &&
             maximum > minimum)
         {
@@ -86,28 +94,10 @@ internal sealed class MonitorEndpoint : IDisposable
                 null);
         }
 
-        if (NativeMethods.GetVCPFeatureAndVCPFeatureReply(
-                handle,
-                NativeMethods.VCP_BRIGHTNESS,
-                IntPtr.Zero,
-                out current,
-                out maximum) && maximum > 0)
+        if (knownBackend != BrightnessBackendKind.DdcVcp &&
+            TryReadVcpBrightness(handle, out current, out maximum))
         {
-            return new MonitorEndpoint(
-                id,
-                friendlyName,
-                serial,
-                displayDevice,
-                bounds,
-                handle,
-                null,
-                null,
-                0,
-                maximum,
-                current,
-                BrightnessBackendKind.DdcVcp,
-                MonitorSupportStatus.Ready,
-                null);
+            return CreateVcp(current, maximum);
         }
 
         return new MonitorEndpoint(
@@ -125,7 +115,31 @@ internal sealed class MonitorEndpoint : IDisposable
             BrightnessBackendKind.None,
             MonitorSupportStatus.Unavailable,
             UnavailableMessage);
+
+        MonitorEndpoint CreateVcp(uint vcpCurrent, uint vcpMaximum) => new(
+            id,
+            friendlyName,
+            serial,
+            displayDevice,
+            bounds,
+            handle,
+            null,
+            null,
+            0,
+            vcpMaximum,
+            vcpCurrent,
+            BrightnessBackendKind.DdcVcp,
+            MonitorSupportStatus.Ready,
+            null);
     }
+
+    private static bool TryReadVcpBrightness(SafePhysicalMonitorHandle handle, out uint current, out uint maximum) =>
+        NativeMethods.GetVCPFeatureAndVCPFeatureReply(
+            handle,
+            NativeMethods.VCP_BRIGHTNESS,
+            IntPtr.Zero,
+            out current,
+            out maximum) && maximum > 0;
 
     public static MonitorEndpoint CreateWmi(
         string id,
@@ -195,7 +209,7 @@ internal sealed class MonitorEndpoint : IDisposable
             ErrorMessage);
     }
 
-    public int SetBrightnessAndRead(int percent)
+    public int SetBrightness(int percent, BrightnessWriteMode mode = BrightnessWriteMode.Commit)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -212,11 +226,10 @@ internal sealed class MonitorEndpoint : IDisposable
         {
             case BrightnessBackendKind.DdcHighLevel:
             case BrightnessBackendKind.DdcVcp:
-                actualPercent = SetDdcAndReadWithRetry(requested);
+                actualPercent = SetDdc(requested, mode);
                 break;
             case BrightnessBackendKind.WmiInternal:
-                CurrentRaw = _wmiReader!.SetBrightnessAndRead(_wmiInstanceName!, (byte)requested);
-                actualPercent = BrightnessMath.ToPercent(CurrentRaw, MinimumRaw, MaximumRaw);
+                actualPercent = SetWmi(requested, mode);
                 break;
             default:
                 throw new InvalidOperationException(UnavailableMessage);
@@ -224,6 +237,56 @@ internal sealed class MonitorEndpoint : IDisposable
 
         ErrorMessage = null;
         return actualPercent;
+    }
+
+    private int SetDdc(int requestedPercent, BrightnessWriteMode mode)
+    {
+        try
+        {
+            switch (mode)
+            {
+                case BrightnessWriteMode.Preview:
+                    WriteDdc(requestedPercent);
+                    return BrightnessMath.ToPercent(CurrentRaw, MinimumRaw, MaximumRaw);
+                case BrightnessWriteMode.Verify:
+                    ReadCurrentDdc();
+                    var actual = BrightnessMath.ToPercent(CurrentRaw, MinimumRaw, MaximumRaw);
+                    if (Math.Abs(actual - requestedPercent) <= 1)
+                    {
+                        return actual;
+                    }
+                    break;
+            }
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+        {
+            // Fall back to a confirmed write, which retries transient DDC/CI failures.
+        }
+
+        return SetDdcAndReadWithRetry(requestedPercent);
+    }
+
+    private int SetWmi(int requestedPercent, BrightnessWriteMode mode)
+    {
+        var brightness = (byte)requestedPercent;
+        switch (mode)
+        {
+            case BrightnessWriteMode.Preview:
+                _wmiReader!.SetBrightness(_wmiInstanceName!, brightness);
+                CurrentRaw = brightness;
+                return BrightnessMath.ToPercent(CurrentRaw, MinimumRaw, MaximumRaw);
+            case BrightnessWriteMode.Verify:
+                if (_wmiReader!.ReadBrightness(_wmiInstanceName!) is byte current &&
+                    Math.Abs(current - requestedPercent) <= 1)
+                {
+                    CurrentRaw = current;
+                    return BrightnessMath.ToPercent(CurrentRaw, MinimumRaw, MaximumRaw);
+                }
+                break;
+        }
+
+        CurrentRaw = _wmiReader!.SetBrightnessAndRead(_wmiInstanceName!, brightness);
+        return BrightnessMath.ToPercent(CurrentRaw, MinimumRaw, MaximumRaw);
     }
 
     private int SetDdcAndReadWithRetry(int requestedPercent)
@@ -234,15 +297,7 @@ internal sealed class MonitorEndpoint : IDisposable
         {
             try
             {
-                if (Backend == BrightnessBackendKind.DdcVcp)
-                {
-                    SetDdcVcp(requestedPercent);
-                }
-                else
-                {
-                    SetDdcHighLevel(requestedPercent);
-                }
-
+                WriteDdc(requestedPercent);
                 ReadCurrentDdc();
                 var actual = BrightnessMath.ToPercent(CurrentRaw, MinimumRaw, MaximumRaw);
 
@@ -265,11 +320,24 @@ internal sealed class MonitorEndpoint : IDisposable
         throw lastFailure ?? new InvalidOperationException("The display did not confirm its brightness change.");
     }
 
+    private void WriteDdc(int percent)
+    {
+        if (Backend == BrightnessBackendKind.DdcVcp)
+        {
+            SetDdcVcp(percent);
+        }
+        else
+        {
+            SetDdcHighLevel(percent);
+        }
+    }
+
     private void SetDdcHighLevel(int percent)
     {
         var raw = BrightnessMath.FromPercent(percent, MinimumRaw, MaximumRaw);
         if (NativeMethods.SetMonitorBrightness(_physicalHandle!, raw))
         {
+            CurrentRaw = raw;
             return;
         }
 
@@ -278,7 +346,7 @@ internal sealed class MonitorEndpoint : IDisposable
                 _physicalHandle!,
                 NativeMethods.VCP_BRIGHTNESS,
                 IntPtr.Zero,
-                out var current,
+                out _,
                 out var maximum) && maximum > 0 &&
             NativeMethods.SetVCPFeature(
                 _physicalHandle!,
@@ -288,7 +356,7 @@ internal sealed class MonitorEndpoint : IDisposable
             Backend = BrightnessBackendKind.DdcVcp;
             MinimumRaw = 0;
             MaximumRaw = maximum;
-            CurrentRaw = current;
+            CurrentRaw = BrightnessMath.FromPercent(percent, 0, maximum);
             return;
         }
 
@@ -302,6 +370,8 @@ internal sealed class MonitorEndpoint : IDisposable
         {
             throw NativeMethods.LastError("The monitor rejected the DDC/CI brightness command");
         }
+
+        CurrentRaw = raw;
     }
 
     private void ReadCurrentDdc()

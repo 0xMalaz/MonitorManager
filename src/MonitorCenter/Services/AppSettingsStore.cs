@@ -58,6 +58,12 @@ internal sealed class AppSettingsStore
         try
         {
             var normalized = Normalize(settings);
+            var content = JsonSerializer.SerializeToUtf8Bytes(normalized, SerializerOptions);
+            if (await IsUnchangedAsync(content, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+
             var directory = Path.GetDirectoryName(_filePath)!;
             Directory.CreateDirectory(directory);
             var temporaryPath = _filePath + ".tmp";
@@ -70,11 +76,7 @@ internal sealed class AppSettingsStore
                              4096,
                              FileOptions.WriteThrough | FileOptions.Asynchronous))
             {
-                await JsonSerializer.SerializeAsync(
-                    stream,
-                    normalized,
-                    SerializerOptions,
-                    cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(content, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
 
@@ -83,6 +85,19 @@ internal sealed class AppSettingsStore
         finally
         {
             _gate.Release();
+        }
+    }
+
+    private async Task<bool> IsUnchangedAsync(byte[] content, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var existing = await File.ReadAllBytesAsync(_filePath, cancellationToken).ConfigureAwait(false);
+            return existing.AsSpan().SequenceEqual(content);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
         }
     }
 

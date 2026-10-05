@@ -90,6 +90,17 @@ internal sealed class WmiMonitorReader
 
     public byte SetBrightnessAndRead(string instanceName, byte brightness)
     {
+        SetBrightness(instanceName, brightness);
+        return ReadBrightness(instanceName) ?? brightness;
+    }
+
+    public byte? ReadBrightness(string instanceName) =>
+        ReadBrightnessStates().TryGetValue(NormalizeInstanceName(instanceName), out var state)
+            ? state.CurrentBrightness
+            : null;
+
+    public void SetBrightness(string instanceName, byte brightness)
+    {
         var normalizedTarget = NormalizeInstanceName(instanceName);
         var methodFound = false;
 
@@ -134,9 +145,6 @@ internal sealed class WmiMonitorReader
         {
             throw new InvalidOperationException("The built-in display is no longer available.");
         }
-
-        var states = ReadBrightnessStates();
-        return states.TryGetValue(normalizedTarget, out var state) ? state.CurrentBrightness : brightness;
     }
 
     internal static string NormalizeInstanceName(string value)

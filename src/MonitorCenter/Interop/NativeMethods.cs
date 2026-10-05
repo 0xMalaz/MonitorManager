@@ -14,7 +14,6 @@ internal static class NativeMethods
     internal const int WM_LBUTTONUP = 0x0202;
     internal const int WM_RBUTTONUP = 0x0205;
     internal const int WM_CONTEXTMENU = 0x007B;
-    internal const int WM_NULL = 0x0000;
     internal const int WM_APP = 0x8000;
     internal const uint NIM_ADD = 0;
     internal const uint NIM_MODIFY = 1;
@@ -34,6 +33,13 @@ internal static class NativeMethods
     internal const int DWMWCP_ROUND = 2;
     internal const int DWMSBT_TRANSIENTWINDOW = 3;
     internal const byte VCP_BRIGHTNESS = 0x10;
+    internal const int DBT_DEVICEARRIVAL = 0x8000;
+    internal const int DBT_DEVICEREMOVECOMPLETE = 0x8004;
+    internal const int DBT_DEVTYP_DEVICEINTERFACE = 0x00000005;
+    internal const uint DEVICE_NOTIFY_WINDOW_HANDLE = 0x00000000;
+    internal const uint ICON_RESOURCE_VERSION = 0x00030000;
+    internal const uint LR_DEFAULTCOLOR = 0x00000000;
+    internal static readonly Guid GUID_DEVINTERFACE_MONITOR = new("E6F07B5F-EE97-4A90-B076-33F57BF4EAA7");
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct Rect
@@ -127,6 +133,16 @@ internal static class NativeMethods
         public IntPtr BalloonIcon;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct DevBroadcastDeviceInterface
+    {
+        public int Size;
+        public int DeviceType;
+        public int Reserved;
+        public Guid ClassGuid;
+        public short Name;
+    }
+
     internal delegate bool MonitorEnumProc(IntPtr monitor, IntPtr hdc, IntPtr rect, IntPtr data);
 
     [DllImport("user32.dll")]
@@ -169,9 +185,29 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetForegroundWindow(IntPtr window);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern IntPtr RegisterDeviceNotification(
+        IntPtr recipient,
+        ref DevBroadcastDeviceInterface filter,
+        uint flags);
+
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+    internal static extern bool UnregisterDeviceNotification(IntPtr handle);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern IntPtr CreateIconFromResourceEx(
+        byte[] iconBits,
+        uint iconBitsSize,
+        [MarshalAs(UnmanagedType.Bool)] bool isIcon,
+        uint version,
+        int width,
+        int height,
+        uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool DestroyIcon(IntPtr icon);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "Shell_NotifyIconW")]
     [return: MarshalAs(UnmanagedType.Bool)]
