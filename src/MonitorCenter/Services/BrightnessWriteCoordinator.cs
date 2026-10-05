@@ -1,17 +1,20 @@
+using MonitorCenter.Models;
+
 namespace MonitorCenter.Services;
 
 internal sealed class BrightnessWriteCoordinator : IAsyncDisposable
 {
-    private readonly Func<int, CancellationToken, Task<int>> _writer;
+    private readonly Func<int, BrightnessWriteMode, CancellationToken, Task<int>> _writer;
     private readonly TimeSpan _debounceDelay;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly object _sync = new();
     private readonly HashSet<Task> _backgroundTasks = [];
     private CancellationTokenSource? _debounceCancellation;
+    private int? _lastPreviewPercent;
     private bool _disposed;
 
     public BrightnessWriteCoordinator(
-        Func<int, CancellationToken, Task<int>> writer,
+        Func<int, BrightnessWriteMode, CancellationToken, Task<int>> writer,
         TimeSpan? debounceDelay = null)
     {
         _writer = writer;
@@ -49,7 +52,8 @@ internal sealed class BrightnessWriteCoordinator : IAsyncDisposable
             _debounceCancellation = null;
         }
 
-        return await ApplyAsync(Math.Clamp(percent, 0, 100), cancellationToken).ConfigureAwait(false);
+        return await ApplyAsync(Math.Clamp(percent, 0, 100), isPreview: false, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private async Task ApplyAfterDelayAsync(int percent, CancellationToken cancellationToken)
@@ -57,7 +61,7 @@ internal sealed class BrightnessWriteCoordinator : IAsyncDisposable
         try
         {
             await Task.Delay(_debounceDelay, cancellationToken).ConfigureAwait(false);
-            await ApplyAsync(percent, cancellationToken).ConfigureAwait(false);
+            await ApplyAsync(percent, isPreview: true, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -68,13 +72,31 @@ internal sealed class BrightnessWriteCoordinator : IAsyncDisposable
         }
     }
 
-    private async Task<int> ApplyAsync(int percent, CancellationToken cancellationToken)
+    private async Task<int> ApplyAsync(int percent, bool isPreview, CancellationToken cancellationToken)
     {
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 
         try
         {
-            var actual = await _writer(percent, cancellationToken).ConfigureAwait(false);
+            // Debounced writes during an interaction skip the read-back. The final write only re-reads the
+            // display when the last preview already sent the same value, so it is not written twice.
+            BrightnessWriteMode mode;
+            if (isPreview)
+            {
+                mode = BrightnessWriteMode.Preview;
+            }
+            else
+            {
+                mode = _lastPreviewPercent == percent ? BrightnessWriteMode.Verify : BrightnessWriteMode.Commit;
+                _lastPreviewPercent = null;
+            }
+
+            var actual = await _writer(percent, mode, cancellationToken).ConfigureAwait(false);
+            if (isPreview)
+            {
+                _lastPreviewPercent = percent;
+            }
+
             Applied?.Invoke(actual);
             return actual;
         }

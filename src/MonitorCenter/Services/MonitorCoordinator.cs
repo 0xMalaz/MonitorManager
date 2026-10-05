@@ -89,11 +89,11 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
             NotifyProfileCollectionsChanged();
         });
 
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        await RefreshAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         await SaveSettingsAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task RefreshAsync(CancellationToken cancellationToken = default)
+    public async Task RefreshAsync(bool reprobeKnownDisplays = true, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -103,7 +103,8 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
             IReadOnlyList<MonitorSnapshot> snapshots;
             try
             {
-                snapshots = await _monitorService.DiscoverAsync(cancellationToken).ConfigureAwait(false);
+                snapshots = await _monitorService.DiscoverAsync(reprobeKnownDisplays, cancellationToken)
+                    .ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -115,20 +116,15 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
                 return;
             }
 
-            MonitorRowViewModel[] oldRows = [];
+            Dictionary<string, bool> previouslyControllable = [];
+            List<MonitorRowViewModel> removedRows = [];
             await _dispatcher.InvokeAsync(() =>
             {
-                oldRows = Monitors.ToArray();
-                Monitors.Clear();
-                foreach (var snapshot in snapshots)
-                {
-                    var displayName = MatchDisplayNamePreference(snapshot)?.Name ?? snapshot.DisplayName;
-                    Monitors.Add(new MonitorRowViewModel(
-                        snapshot with { DisplayName = displayName },
-                        _monitorService,
-                        _dispatcher,
-                        WriteBrightnessAsync));
-                }
+                previouslyControllable = Monitors.ToDictionary(
+                    row => row.Snapshot.Id,
+                    row => row.IsControllable,
+                    StringComparer.OrdinalIgnoreCase);
+                removedRows = UpdateMonitorRows(snapshots);
 
                 EmptyMessage = "No displays detected.";
                 OnPropertyChanged(nameof(ShowEmptyState));
@@ -136,11 +132,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
                 MonitorsChanged?.Invoke(this, EventArgs.Empty);
             });
 
-            var previouslyControllable = oldRows.ToDictionary(
-                row => row.Snapshot.Id,
-                row => row.IsControllable,
-                StringComparer.OrdinalIgnoreCase);
-            foreach (var row in oldRows)
+            foreach (var row in removedRows)
             {
                 await row.DisposeAsync();
             }
@@ -157,6 +149,64 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
             await _dispatcher.InvokeAsync(() => IsRefreshing = false);
             _refreshGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Reconciles <see cref="Monitors"/> with a discovery result in place, keeping the rows of displays that are
+    /// still connected so the flyout is not rebuilt. Returns the rows that were removed. Must run on the dispatcher.
+    /// </summary>
+    private List<MonitorRowViewModel> UpdateMonitorRows(IReadOnlyList<MonitorSnapshot> snapshots)
+    {
+        var existing = Monitors.ToDictionary(row => row.Snapshot.Id, StringComparer.OrdinalIgnoreCase);
+        var removed = new List<MonitorRowViewModel>();
+        var desired = new List<MonitorRowViewModel>(snapshots.Count);
+        foreach (var snapshot in snapshots)
+        {
+            var displayName = MatchDisplayNamePreference(snapshot)?.Name ?? snapshot.DisplayName;
+            var named = snapshot with { DisplayName = displayName };
+
+            // A row only writes brightness when its display was controllable at creation, so a change in
+            // controllability needs a new row.
+            if (existing.Remove(snapshot.Id, out var row) && row.IsControllable == named.IsControllable)
+            {
+                row.UpdateSnapshot(named);
+                desired.Add(row);
+                continue;
+            }
+
+            if (row is not null)
+            {
+                removed.Add(row);
+            }
+
+            desired.Add(new MonitorRowViewModel(named, _monitorService, _dispatcher, WriteBrightnessAsync));
+        }
+
+        removed.AddRange(existing.Values);
+        for (var index = 0; index < desired.Count; index++)
+        {
+            if (index < Monitors.Count && ReferenceEquals(Monitors[index], desired[index]))
+            {
+                continue;
+            }
+
+            var currentIndex = Monitors.IndexOf(desired[index]);
+            if (currentIndex >= 0)
+            {
+                Monitors.Move(currentIndex, index);
+            }
+            else
+            {
+                Monitors.Insert(index, desired[index]);
+            }
+        }
+
+        while (Monitors.Count > desired.Count)
+        {
+            Monitors.RemoveAt(Monitors.Count - 1);
+        }
+
+        return removed;
     }
 
     public async Task<BrightnessProfile> CreateProfileFromCurrentAsync(
@@ -251,7 +301,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
                 var result = await _monitorService.SetBrightnessAsync(
                     row.Snapshot.Id,
                     brightness,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
                 row.ApplyExternalBrightness(result.ActualPercent);
             }
             catch (Exception)
@@ -325,7 +375,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
                 var result = await _monitorService.SetBrightnessAsync(
                     row.Snapshot.Id,
                     brightness,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
                 row.ApplyExternalBrightness(result.ActualPercent);
             }
             catch (Exception)
@@ -344,10 +394,11 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
     private async Task<int> WriteBrightnessAsync(
         MonitorRowViewModel source,
         int requested,
+        BrightnessWriteMode mode,
         CancellationToken cancellationToken)
     {
         MarkCustom();
-        var result = await _monitorService.SetBrightnessAsync(source.Snapshot.Id, requested, cancellationToken)
+        var result = await _monitorService.SetBrightnessAsync(source.Snapshot.Id, requested, mode, cancellationToken)
             .ConfigureAwait(false);
         return result.ActualPercent;
     }

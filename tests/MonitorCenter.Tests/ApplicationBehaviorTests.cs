@@ -1,4 +1,6 @@
+using System.Runtime.InteropServices;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using MonitorCenter.Interop;
 using MonitorCenter.Services;
 
 namespace MonitorCenter.Tests;
@@ -14,6 +16,38 @@ public sealed class ApplicationBehaviorTests
         Assert.AreEqual(
             $"\"{Path.GetFullPath(path)}\" --startup",
             StartupRegistration.BuildCommand(path));
+    }
+
+    [TestMethod]
+    public void DeviceChange_OnlyMonitorInterfaceArrivalsAndRemovalsTriggerRefresh()
+    {
+        const int devNodesChanged = 0x0007;
+        var usbInterface = new Guid("A5DCBF10-6530-11D2-901F-00C04FB951ED");
+
+        Assert.IsTrue(IsMonitorChange(NativeMethods.DBT_DEVICEARRIVAL, NativeMethods.GUID_DEVINTERFACE_MONITOR));
+        Assert.IsTrue(IsMonitorChange(NativeMethods.DBT_DEVICEREMOVECOMPLETE, NativeMethods.GUID_DEVINTERFACE_MONITOR));
+        Assert.IsFalse(IsMonitorChange(NativeMethods.DBT_DEVICEARRIVAL, usbInterface));
+        Assert.IsFalse(MonitorCenter.UI.FlyoutWindow.IsMonitorInterfaceChange(new IntPtr(devNodesChanged), IntPtr.Zero));
+
+        static bool IsMonitorChange(int eventType, Guid interfaceClass)
+        {
+            var broadcast = new NativeMethods.DevBroadcastDeviceInterface
+            {
+                Size = Marshal.SizeOf<NativeMethods.DevBroadcastDeviceInterface>(),
+                DeviceType = NativeMethods.DBT_DEVTYP_DEVICEINTERFACE,
+                ClassGuid = interfaceClass
+            };
+            var buffer = Marshal.AllocHGlobal(broadcast.Size);
+            try
+            {
+                Marshal.StructureToPtr(broadcast, buffer, fDeleteOld: false);
+                return MonitorCenter.UI.FlyoutWindow.IsMonitorInterfaceChange(new IntPtr(eventType), buffer);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
     }
 
     [TestMethod]
@@ -79,8 +113,12 @@ public sealed class ApplicationBehaviorTests
         }
 
         stream.Position = 0;
-        using var icon = new System.Drawing.Icon(stream, 32, 32);
-        Assert.AreEqual(32, icon.Width);
-        Assert.AreEqual(32, icon.Height);
+        var trayFrame = MonitorCenter.UI.TrayIconController.ReadIconImage(stream, 32);
+        var expected = entries.Single(entry => entry.Width == 32);
+        Assert.AreEqual((int)expected.Size, trayFrame.Length);
+
+        var icon = MonitorCenter.UI.TrayIconController.CreateTrayIcon();
+        Assert.AreNotEqual(IntPtr.Zero, icon);
+        Assert.IsTrue(MonitorCenter.Interop.NativeMethods.DestroyIcon(icon));
     }
 }

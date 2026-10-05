@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -6,8 +7,6 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using MonitorCenter.Interop;
 using MonitorCenter.Models;
-using DrawingPoint = System.Drawing.Point;
-using FormsScreen = System.Windows.Forms.Screen;
 using WpfButton = System.Windows.Controls.Button;
 using WpfMenuItem = System.Windows.Controls.MenuItem;
 
@@ -19,6 +18,7 @@ public partial class FlyoutWindow : Window
     private readonly SemaphoreSlim _visibilityGate = new(1, 1);
     private readonly DispatcherTimer _displayChangeTimer;
     private HwndSource? _windowSource;
+    private IntPtr _monitorNotification;
     private bool _isDisplayMenuOpen;
     private bool _allowClose;
     private bool _disposed;
@@ -45,7 +45,7 @@ public partial class FlyoutWindow : Window
         _displayChangeTimer.Tick += async (_, _) =>
         {
             _displayChangeTimer.Stop();
-            await RefreshAsync();
+            await RefreshAsync(reprobeKnownDisplays: false);
         };
     }
 
@@ -72,11 +72,11 @@ public partial class FlyoutWindow : Window
         finally { _visibilityGate.Release(); }
     }
 
-    public async Task RefreshAsync()
+    public async Task RefreshAsync(bool reprobeKnownDisplays = true)
     {
         if (_disposed) return;
         NativeMethods.GetCursorPos(out var cursor);
-        await _viewModel.RefreshAsync();
+        await _viewModel.RefreshAsync(reprobeKnownDisplays);
         if (IsVisible)
         {
             UpdateLayout();
@@ -226,16 +226,53 @@ public partial class FlyoutWindow : Window
         NativeMethods.SetWindowLongPtr(handle, NativeMethods.GWL_EXSTYLE,
             new IntPtr((style | NativeMethods.WS_EX_TOOLWINDOW) & ~NativeMethods.WS_EX_APPWINDOW));
         ApplySystemBackdrop(handle);
+        RegisterMonitorNotifications(handle);
     }
 
     private IntPtr WindowProcedure(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (message is NativeMethods.WM_DISPLAYCHANGE or NativeMethods.WM_DEVICECHANGE)
+        // Top-level windows receive a WM_DEVICECHANGE broadcast for every USB, Bluetooth, or dock change;
+        // only monitor interface arrivals and removals warrant a display refresh.
+        if (message == NativeMethods.WM_DISPLAYCHANGE ||
+            (message == NativeMethods.WM_DEVICECHANGE && IsMonitorInterfaceChange(wParam, lParam)))
         {
             _displayChangeTimer.Stop();
             _displayChangeTimer.Start();
         }
         return IntPtr.Zero;
+    }
+
+    internal static bool IsMonitorInterfaceChange(IntPtr wParam, IntPtr lParam)
+    {
+        var eventType = unchecked((int)wParam.ToInt64());
+        if (eventType is not (NativeMethods.DBT_DEVICEARRIVAL or NativeMethods.DBT_DEVICEREMOVECOMPLETE) ||
+            lParam == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var header = Marshal.PtrToStructure<NativeMethods.DevBroadcastDeviceInterface>(lParam);
+        return header.DeviceType == NativeMethods.DBT_DEVTYP_DEVICEINTERFACE &&
+               header.ClassGuid == NativeMethods.GUID_DEVINTERFACE_MONITOR;
+    }
+
+    private void RegisterMonitorNotifications(IntPtr handle)
+    {
+        if (_monitorNotification != IntPtr.Zero)
+        {
+            return;
+        }
+
+        var filter = new NativeMethods.DevBroadcastDeviceInterface
+        {
+            Size = Marshal.SizeOf<NativeMethods.DevBroadcastDeviceInterface>(),
+            DeviceType = NativeMethods.DBT_DEVTYP_DEVICEINTERFACE,
+            ClassGuid = NativeMethods.GUID_DEVINTERFACE_MONITOR
+        };
+        _monitorNotification = NativeMethods.RegisterDeviceNotification(
+            handle,
+            ref filter,
+            NativeMethods.DEVICE_NOTIFY_WINDOW_HANDLE);
     }
 
     private void ApplySystemBackdrop(IntPtr handle)
@@ -256,14 +293,21 @@ public partial class FlyoutWindow : Window
 
     private void PositionNearTaskbar(NativeMethods.Point cursor)
     {
-        var screen = FormsScreen.FromPoint(new DrawingPoint(cursor.X, cursor.Y));
         var monitor = NativeMethods.MonitorFromPoint(cursor, NativeMethods.MONITOR_DEFAULTTONEAREST);
-        var scale = monitor != IntPtr.Zero && NativeMethods.GetDpiForMonitor(monitor, 0, out var dpiX, out _) == 0
+        var info = new NativeMethods.MonitorInfoEx { Size = Marshal.SizeOf<NativeMethods.MonitorInfoEx>() };
+        if (monitor == IntPtr.Zero || !NativeMethods.GetMonitorInfo(monitor, ref info))
+        {
+            return;
+        }
+
+        var scale = NativeMethods.GetDpiForMonitor(monitor, 0, out var dpiX, out _) == 0
             ? dpiX / 96d
             : 1d;
+        var bounds = info.Monitor;
+        var workArea = info.WorkArea;
         var placement = FlyoutPlacement.Calculate(
-            new PixelRect(screen.Bounds.Left, screen.Bounds.Top, screen.Bounds.Right, screen.Bounds.Bottom),
-            new PixelRect(screen.WorkingArea.Left, screen.WorkingArea.Top, screen.WorkingArea.Right, screen.WorkingArea.Bottom),
+            new PixelRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom),
+            new PixelRect(workArea.Left, workArea.Top, workArea.Right, workArea.Bottom),
             new PixelPoint(cursor.X, cursor.Y),
             new PixelSize((int)Math.Ceiling(ActualWidth * scale), (int)Math.Ceiling(ActualHeight * scale)));
         Left = placement.X / scale;
@@ -291,6 +335,11 @@ public partial class FlyoutWindow : Window
         _allowClose = true;
         _displayChangeTimer.Stop();
         ThemeManager.ThemeChanged -= OnThemeChanged;
+        if (_monitorNotification != IntPtr.Zero)
+        {
+            NativeMethods.UnregisterDeviceNotification(_monitorNotification);
+            _monitorNotification = IntPtr.Zero;
+        }
         _windowSource?.RemoveHook(WindowProcedure);
         _windowSource = null;
         Close();

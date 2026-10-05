@@ -10,7 +10,7 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
 {
     private readonly MonitorService _monitorService;
     private readonly Dispatcher _dispatcher;
-    private readonly Func<MonitorRowViewModel, int, CancellationToken, Task<int>>? _brightnessWriter;
+    private readonly Func<MonitorRowViewModel, int, BrightnessWriteMode, CancellationToken, Task<int>>? _brightnessWriter;
     private readonly BrightnessWriteCoordinator? _writeCoordinator;
     private int _currentPercent;
     private int _appliedPercent;
@@ -23,7 +23,7 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
         MonitorSnapshot snapshot,
         MonitorService monitorService,
         Dispatcher dispatcher,
-        Func<MonitorRowViewModel, int, CancellationToken, Task<int>>? brightnessWriter = null)
+        Func<MonitorRowViewModel, int, BrightnessWriteMode, CancellationToken, Task<int>>? brightnessWriter = null)
     {
         Snapshot = snapshot;
         _monitorService = monitorService;
@@ -153,14 +153,17 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
         }
     }
 
-    private async Task<int> WriteBrightnessAsync(int percent, CancellationToken cancellationToken)
+    private async Task<int> WriteBrightnessAsync(
+        int percent,
+        BrightnessWriteMode mode,
+        CancellationToken cancellationToken)
     {
         if (_brightnessWriter is not null)
         {
-            return await _brightnessWriter(this, percent, cancellationToken).ConfigureAwait(false);
+            return await _brightnessWriter(this, percent, mode, cancellationToken).ConfigureAwait(false);
         }
 
-        var result = await _monitorService.SetBrightnessAsync(Snapshot.Id, percent, cancellationToken)
+        var result = await _monitorService.SetBrightnessAsync(Snapshot.Id, percent, mode, cancellationToken)
             .ConfigureAwait(false);
         Snapshot = result.Snapshot with { DisplayName = Snapshot.DisplayName };
         return result.ActualPercent;
@@ -210,6 +213,35 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
                 _suppressWrite = false;
             }
         });
+    }
+
+    /// <summary>
+    /// Applies a fresh discovery result for the same display without rebuilding the row. Must be called on the
+    /// dispatcher thread.
+    /// </summary>
+    public void UpdateSnapshot(MonitorSnapshot snapshot)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        Snapshot = snapshot;
+        _suppressWrite = true;
+        try
+        {
+            _appliedPercent = snapshot.CurrentPercent;
+            CurrentPercent = snapshot.CurrentPercent;
+            StatusText = snapshot.ErrorMessage;
+        }
+        finally
+        {
+            _suppressWrite = false;
+        }
+
+        OnPropertyChanged(nameof(DisplayName));
+        OnPropertyChanged(nameof(ToolTip));
+        OnPropertyChanged(nameof(BrightnessText));
     }
 
     public void SetDisplayName(string displayName)

@@ -11,6 +11,7 @@ namespace MonitorCenter.UI;
 internal static class ThemeManager
 {
     private static bool _initialized;
+    private static bool _isHighContrast;
 
     internal static bool IsLightTheme { get; private set; }
     internal static event EventHandler? ThemeChanged;
@@ -56,6 +57,7 @@ internal static class ThemeManager
         }
 
         IsLightTheme = lightTheme;
+        _isHighContrast = highContrast;
         var colors = highContrast ? CreateHighContrastPalette() : CreatePalette(lightTheme);
         foreach (var (key, color) in colors)
         {
@@ -221,7 +223,29 @@ internal static class ThemeManager
 
     private static void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
     {
+        // This event also fires for wallpaper, mouse, keyboard, and many other unrelated settings.
+        if (e.Category is not (UserPreferenceCategory.General or
+            UserPreferenceCategory.Color or
+            UserPreferenceCategory.VisualStyle or
+            UserPreferenceCategory.Accessibility))
+        {
+            return;
+        }
+
         var application = System.Windows.Application.Current;
-        application?.Dispatcher.BeginInvoke(ApplySystemTheme);
+        application?.Dispatcher.BeginInvoke(ApplySystemThemeIfChanged);
+    }
+
+    private static void ApplySystemThemeIfChanged()
+    {
+        var lightTheme = ReadLightTheme();
+        var highContrast = SystemParameters.HighContrast;
+        // High contrast palettes come from system colors, which can change without the mode flag changing.
+        if (!highContrast && !_isHighContrast && lightTheme == IsLightTheme)
+        {
+            return;
+        }
+
+        ApplyPalette(lightTheme, highContrast);
     }
 }

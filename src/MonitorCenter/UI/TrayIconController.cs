@@ -1,11 +1,14 @@
 using System.ComponentModel;
-using System.Drawing;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
 using MonitorCenter.Interop;
 using MonitorCenter.Services;
-using FormsContextMenuStrip = System.Windows.Forms.ContextMenuStrip;
-using FormsToolStripMenuItem = System.Windows.Forms.ToolStripMenuItem;
+using WpfContextMenu = System.Windows.Controls.ContextMenu;
+using WpfMenuItem = System.Windows.Controls.MenuItem;
+using WpfSeparator = System.Windows.Controls.Separator;
 
 namespace MonitorCenter.UI;
 
@@ -13,13 +16,14 @@ internal sealed class TrayIconController : IDisposable
 {
     private static readonly Guid IconGuid = new("9B151928-5408-48F9-A546-99938B439ECC");
     private const uint CallbackMessage = NativeMethods.WM_APP + 41;
+    private const int TrayIconSize = 32;
 
     private readonly FlyoutWindow _flyoutWindow;
     private readonly StartupRegistration _startupRegistration;
     private readonly HwndSource _messageSource;
-    private readonly Icon _icon;
-    private readonly FormsContextMenuStrip _contextMenu;
-    private readonly FormsToolStripMenuItem _startupItem;
+    private readonly IntPtr _icon;
+    private readonly WpfContextMenu _contextMenu;
+    private readonly WpfMenuItem _startupItem;
     private readonly uint _taskbarCreatedMessage;
     private bool _disposed;
 
@@ -40,25 +44,27 @@ internal sealed class TrayIconController : IDisposable
         _messageSource.AddHook(WindowProcedure);
         _taskbarCreatedMessage = NativeMethods.RegisterWindowMessage("TaskbarCreated");
 
-        var openItem = new FormsToolStripMenuItem("Open flyout");
+        var openItem = CreateMenuItem("Open flyout");
         openItem.Click += async (_, _) => await _flyoutWindow.ShowFlyoutAsync();
-        var refreshItem = new FormsToolStripMenuItem("Refresh displays");
+        var refreshItem = CreateMenuItem("Refresh displays");
         refreshItem.Click += async (_, _) => await _flyoutWindow.RefreshAsync();
-        _startupItem = new FormsToolStripMenuItem("Start with Windows") { CheckOnClick = true };
-        _startupItem.Click += (_, _) => SetStartupPreference(_startupItem.Checked);
-        var exitItem = new FormsToolStripMenuItem("Exit");
+        _startupItem = CreateMenuItem("Start with Windows");
+        _startupItem.IsCheckable = true;
+        _startupItem.Click += (_, _) => SetStartupPreference(_startupItem.IsChecked);
+        var exitItem = CreateMenuItem("Exit");
         exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
-        _contextMenu = new FormsContextMenuStrip();
+        _contextMenu = new WpfContextMenu
+        {
+            Placement = PlacementMode.MousePoint
+        };
+        _contextMenu.SetResourceReference(FrameworkElement.StyleProperty, "TrayContextMenuStyle");
         _contextMenu.Items.Add(openItem);
         _contextMenu.Items.Add(refreshItem);
-        _contextMenu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+        _contextMenu.Items.Add(CreateSeparator());
         _contextMenu.Items.Add(_startupItem);
-        _contextMenu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+        _contextMenu.Items.Add(CreateSeparator());
         _contextMenu.Items.Add(exitItem);
-        _contextMenu.Opening += (_, _) => RefreshStartupCheckmark();
-        ApplyContextMenuTheme();
-        ThemeManager.ThemeChanged += OnThemeChanged;
 
         AddIcon();
     }
@@ -97,7 +103,7 @@ internal sealed class TrayIconController : IDisposable
         Id = 1,
         Flags = flags,
         CallbackMessage = CallbackMessage,
-        Icon = _icon.Handle,
+        Icon = _icon,
         Tip = "MonitorCenter",
         Info = string.Empty,
         InfoTitle = string.Empty,
@@ -126,28 +132,20 @@ internal sealed class TrayIconController : IDisposable
         else if (notification is NativeMethods.WM_RBUTTONUP or NativeMethods.WM_CONTEXTMENU)
         {
             handled = true;
-            NativeMethods.SetForegroundWindow(_messageSource.Handle);
-            _contextMenu.Show(System.Windows.Forms.Cursor.Position);
-            NativeMethods.PostMessage(_messageSource.Handle, NativeMethods.WM_NULL, IntPtr.Zero, IntPtr.Zero);
+            ShowContextMenu();
         }
         return IntPtr.Zero;
     }
 
-    private void OnThemeChanged(object? sender, EventArgs e) => ApplyContextMenuTheme();
-
-    private void ApplyContextMenuTheme()
+    private void ShowContextMenu()
     {
-        var light = ThemeManager.IsLightTheme;
-        var background = light ? Color.FromArgb(247, 249, 252) : Color.FromArgb(32, 36, 43);
-        var foreground = light ? Color.FromArgb(24, 32, 42) : Color.FromArgb(247, 249, 252);
-        _contextMenu.BackColor = background;
-        _contextMenu.ForeColor = foreground;
-        _contextMenu.Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
-        _contextMenu.Renderer = new System.Windows.Forms.ToolStripProfessionalRenderer(new TrayMenuColorTable(light));
-        foreach (System.Windows.Forms.ToolStripItem item in _contextMenu.Items)
+        RefreshStartupCheckmark();
+        _contextMenu.IsOpen = true;
+
+        // The menu must own the foreground so that clicking anywhere else dismisses it.
+        if (PresentationSource.FromVisual(_contextMenu) is HwndSource menuSource)
         {
-            item.BackColor = background;
-            item.ForeColor = foreground;
+            NativeMethods.SetForegroundWindow(menuSource.Handle);
         }
     }
 
@@ -163,11 +161,25 @@ internal sealed class TrayIconController : IDisposable
 
     private void RefreshStartupCheckmark()
     {
-        try { _startupItem.Checked = _startupRegistration.IsEnabled; }
-        catch { _startupItem.Checked = false; }
+        try { _startupItem.IsChecked = _startupRegistration.IsEnabled; }
+        catch { _startupItem.IsChecked = false; }
     }
 
-    private static Icon CreateTrayIcon()
+    private static WpfMenuItem CreateMenuItem(string header)
+    {
+        var item = new WpfMenuItem { Header = header };
+        item.SetResourceReference(FrameworkElement.StyleProperty, "TrayMenuItemStyle");
+        return item;
+    }
+
+    private static WpfSeparator CreateSeparator()
+    {
+        var separator = new WpfSeparator();
+        separator.SetResourceReference(FrameworkElement.StyleProperty, "TrayMenuSeparatorStyle");
+        return separator;
+    }
+
+    internal static IntPtr CreateTrayIcon()
     {
         using var stream = typeof(TrayIconController).Assembly.GetManifestResourceStream(
             "MonitorCenter.Assets.MonitorCenter.ico");
@@ -176,41 +188,71 @@ internal sealed class TrayIconController : IDisposable
             throw new InvalidOperationException("The MonitorCenter tray icon resource is missing.");
         }
 
-        using var icon = new Icon(stream, 32, 32);
-        return (Icon)icon.Clone();
+        var image = ReadIconImage(stream, TrayIconSize);
+        var icon = NativeMethods.CreateIconFromResourceEx(
+            image,
+            (uint)image.Length,
+            isIcon: true,
+            NativeMethods.ICON_RESOURCE_VERSION,
+            TrayIconSize,
+            TrayIconSize,
+            NativeMethods.LR_DEFAULTCOLOR);
+        if (icon == IntPtr.Zero)
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows could not load the tray icon");
+        }
+
+        return icon;
+    }
+
+    /// <summary>
+    /// Returns the image data of the .ico frame closest to <paramref name="size"/>, preferring larger frames
+    /// so Windows scales down rather than up.
+    /// </summary>
+    internal static byte[] ReadIconImage(Stream stream, int size)
+    {
+        using var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
+        reader.ReadUInt16();
+        if (reader.ReadUInt16() != 1)
+        {
+            throw new InvalidDataException("The tray icon resource is not an icon file.");
+        }
+
+        var count = reader.ReadUInt16();
+        (int Size, uint Length, uint Offset)? best = null;
+        for (var index = 0; index < count; index++)
+        {
+            var widthByte = reader.ReadByte();
+            reader.ReadBytes(7);
+            var length = reader.ReadUInt32();
+            var offset = reader.ReadUInt32();
+            var width = widthByte == 0 ? 256 : widthByte;
+            if (best is null || Score(width) < Score(best.Value.Size))
+            {
+                best = (width, length, offset);
+            }
+        }
+
+        if (best is not { } frame)
+        {
+            throw new InvalidDataException("The tray icon resource has no images.");
+        }
+
+        stream.Position = frame.Offset;
+        return reader.ReadBytes((int)frame.Length);
+
+        int Score(int width) => width >= size ? width - size : 1000 + size - width;
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        ThemeManager.ThemeChanged -= OnThemeChanged;
         var data = CreateData(NativeMethods.NIF_GUID);
         NativeMethods.ShellNotifyIcon(NativeMethods.NIM_DELETE, ref data);
-        _contextMenu.Dispose();
+        _contextMenu.IsOpen = false;
         _messageSource.RemoveHook(WindowProcedure);
         _messageSource.Dispose();
-        _icon.Dispose();
+        NativeMethods.DestroyIcon(_icon);
     }
-}
-
-internal sealed class TrayMenuColorTable(bool lightTheme) : System.Windows.Forms.ProfessionalColorTable
-{
-    private readonly Color _background = lightTheme ? Color.FromArgb(247, 249, 252) : Color.FromArgb(32, 36, 43);
-    private readonly Color _border = lightTheme ? Color.FromArgb(143, 155, 170) : Color.FromArgb(104, 116, 133);
-    private readonly Color _selection = lightTheme ? Color.FromArgb(223, 235, 246) : Color.FromArgb(52, 75, 91);
-
-    public override Color ToolStripDropDownBackground => _background;
-    public override Color ImageMarginGradientBegin => _background;
-    public override Color ImageMarginGradientMiddle => _background;
-    public override Color ImageMarginGradientEnd => _background;
-    public override Color MenuBorder => _border;
-    public override Color MenuItemBorder => _border;
-    public override Color MenuItemSelected => _selection;
-    public override Color MenuItemSelectedGradientBegin => _selection;
-    public override Color MenuItemSelectedGradientEnd => _selection;
-    public override Color MenuItemPressedGradientBegin => _selection;
-    public override Color MenuItemPressedGradientEnd => _selection;
-    public override Color SeparatorDark => _border;
-    public override Color SeparatorLight => _background;
 }

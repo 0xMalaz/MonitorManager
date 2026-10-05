@@ -152,8 +152,8 @@ internal sealed class FlyoutViewModel : INotifyPropertyChanged
     public bool CanSaveDisplayName =>
         _renameMonitor is not null && !string.IsNullOrWhiteSpace(RenameDisplayName);
 
-    public Task RefreshAsync(CancellationToken cancellationToken = default) =>
-        _coordinator.RefreshAsync(cancellationToken);
+    public Task RefreshAsync(bool reprobeKnownDisplays = true, CancellationToken cancellationToken = default) =>
+        _coordinator.RefreshAsync(reprobeKnownDisplays, cancellationToken);
 
     public Task ApplyProfileAsync(BrightnessProfile profile, CancellationToken cancellationToken = default) =>
         _coordinator.ApplyProfileAsync(profile, cancellationToken);
