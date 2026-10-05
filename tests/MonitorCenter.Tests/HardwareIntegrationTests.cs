@@ -11,7 +11,7 @@ public sealed class HardwareIntegrationTests
     public TestContext TestContext { get; set; } = null!;
 
     [TestMethod]
-    public async Task DiscoversExpectedConnectedMonitorsAndSupportStates()
+    public async Task DiscoversConnectedMonitorsWithConsistentSupportStates()
     {
         RequireEnvironmentVariable("MONITORCENTER_HARDWARE_TESTS");
         await using var service = new MonitorService();
@@ -19,21 +19,37 @@ public sealed class HardwareIntegrationTests
         var monitors = await service.DiscoverAsync();
         WriteDiagnostics(monitors);
 
-        Assert.AreEqual(3, monitors.Count, "Expected the three connected desktop monitors.");
-        Assert.AreEqual(1, monitors.Count(monitor => monitor.FriendlyName == "27GN880"));
-        Assert.AreEqual(2, monitors.Count(monitor => monitor.FriendlyName == "LS27AG32x"));
+        Assert.IsTrue(monitors.Count > 0, "Expected at least one connected display.");
+        Assert.AreEqual(
+            monitors.Count,
+            monitors.Select(monitor => monitor.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            "Display IDs should be unique.");
 
-        var samsungs = monitors.Where(monitor => monitor.FriendlyName == "LS27AG32x").ToArray();
-        var lg = monitors.Single(monitor => monitor.FriendlyName == "27GN880");
-
-        Assert.IsTrue(lg.IsControllable, "The LG should expose DDC/CI brightness.");
-        Assert.IsTrue(
-            samsungs.Any(monitor => monitor.IsControllable),
-            "At least one Samsung should expose brightness; either unit may be intermittently unavailable.");
-        foreach (var unavailableSamsung in samsungs.Where(monitor => !monitor.IsControllable))
+        foreach (var monitor in monitors)
         {
-            StringAssert.Contains(unavailableSamsung.ErrorMessage, "DDC/CI");
+            Assert.IsFalse(string.IsNullOrWhiteSpace(monitor.DisplayName), $"{monitor.Id} has no display name.");
+            if (monitor.IsControllable)
+            {
+                Assert.IsNull(monitor.ErrorMessage, $"{monitor.DisplayName} is controllable but reports an error.");
+                Assert.IsTrue(
+                    monitor.CurrentPercent is >= 0 and <= 100,
+                    $"{monitor.DisplayName} reported {monitor.CurrentPercent}%.");
+            }
+            else
+            {
+                Assert.AreEqual(BrightnessBackendKind.None, monitor.Backend);
+                StringAssert.Contains(monitor.ErrorMessage, "DDC/CI");
+            }
         }
+
+        // Rediscovering without reprobing known displays must describe the same displays.
+        var rediscovered = await service.DiscoverAsync(reprobeKnownDisplays: false);
+        CollectionAssert.AreEqual(
+            monitors.Select(Describe).ToArray(),
+            rediscovered.Select(Describe).ToArray());
+
+        static string Describe(MonitorSnapshot monitor) =>
+            $"{monitor.Id}|{monitor.FriendlyName}|{monitor.DisplayName}|{monitor.Serial}|{monitor.Backend}|{monitor.Status}";
     }
 
     [TestMethod]
@@ -44,7 +60,10 @@ public sealed class HardwareIntegrationTests
         var monitors = await service.DiscoverAsync();
         var ready = monitors.Where(monitor => monitor.IsControllable).ToArray();
 
-        Assert.IsTrue(ready.Length >= 2, "Expected at least the LG and one Samsung to be controllable.");
+        if (ready.Length == 0)
+        {
+            Assert.Inconclusive("No connected display exposes controllable brightness.");
+        }
 
         foreach (var monitor in ready)
         {

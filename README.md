@@ -1,77 +1,89 @@
 # MonitorCenter
 
-MonitorCenter is a tray-only Windows 11 app for controlling the real hardware brightness of connected displays. It has no main window and does not appear in the taskbar or Alt+Tab.
+A lightweight Windows 11 tray app for changing the real hardware brightness of your monitors, all from one place.
 
-## Use
+MonitorCenter lives in the notification area. It has no main window and stays out of the taskbar and Alt+Tab.
 
-1. Run `dist\MonitorCenter.exe`.
-2. Click the blue monitor icon in the taskbar notification area.
-3. Displays appear as square brightness controls, with up to three controls per row.
-4. Click anywhere inside a display's square. The bottom is 0%, the middle is 50%, and the top is 100%.
-5. Hold the mouse button and drag vertically to adjust continuously. The shown percentage is read back from the monitor after release.
+## Features
 
-Use the **...** button at the top right of a display and choose **Rename Display** to give it a custom name. The name is retained across display refreshes and app restarts.
+- Adjust the brightness of every connected display from a single tray flyout.
+- Uses the monitor's own brightness control (DDC/CI), not a software dimming overlay.
+- Supports built-in laptop screens through Windows' brightness control.
+- Save up to three brightness profiles and switch between them with one click.
+- Rename displays so they're easy to tell apart.
+- Follows the Windows light and dark theme.
+- Picks up monitors as they're connected or disconnected.
 
-Press **Escape**, click elsewhere, or click the tray icon again to hide the flyout. Right-click the tray icon to refresh displays, control Windows startup, or exit MonitorCenter.
+## Install
 
-## Profiles
+1. Download `MonitorCenter-Windows-x64.zip` from the [latest release](https://github.com/0xMalaz/MonitorManager/releases/latest).
+2. Extract it to a permanent folder, for example `%LOCALAPPDATA%\Programs\MonitorCenter`.
+3. Run `MonitorCenter.exe`.
 
-You can keep up to three brightness profiles. Each profile records the current brightness of every controllable display.
+The executable is self-contained, so you don't need to install .NET.
 
-- Click a profile at the top of the tray flyout to apply it.
-- Choose **New Profile** in the Profiles section, enter a name, and choose **Save** to capture the current brightness setup.
-- The **New Profile** button becomes unavailable after three profiles have been saved.
+When you start it normally for the first time, MonitorCenter adds itself to Windows startup for your user account. You can turn this off with **Start with Windows** in the tray menu.
 
-Profiles and custom display names are stored as versioned JSON under `%LOCALAPPDATA%\MonitorCenter\settings.json`. When upgrading from an older MonitorCenter build, the first three existing profiles and their brightness values are retained; settings for the removed main-window features are discarded.
+## Usage
 
-The first normal Release launch enables startup for the current Windows user. Startup launches use the internal `--startup` argument and do not open the flyout.
+- **Open the flyout:** click the MonitorCenter icon in the notification area.
+- **Set brightness:** click inside a display's square. The bottom is 0%, the middle 50%, and the top 100%. Hold and drag up or down to adjust continuously. You can also use the mouse wheel or the arrow keys.
+- **Rename a display:** click the **...** button on its square and choose **Rename Display**.
+- **Profiles:** choose **New Profile**, enter a name, and choose **Save** to store the current brightness of every display. Click a profile at the top of the flyout to apply it.
+- **Close the flyout:** press **Escape**, click elsewhere, or click the tray icon again.
+- **Tray menu:** right-click the icon to refresh displays, toggle **Start with Windows**, or exit.
+
+Profiles and display names are saved to `%LOCALAPPDATA%\MonitorCenter\settings.json`.
 
 ## Display support
 
-- External monitors use Windows' DDC/CI monitor APIs. The app first tries the high-level brightness API and then MCCS VCP code `0x10`.
-- Built-in laptop panels use Windows WMI brightness control.
-- Unsupported displays remain visible as disabled squares with a DDC/CI diagnostic in their tooltip. No software dimming overlay is used.
-- Monitor settings are never saved to display NVRAM.
+| Display | How brightness is controlled |
+| --- | --- |
+| External monitors | DDC/CI, using the Windows monitor configuration API, with MCCS VCP code `0x10` as a fallback |
+| Built-in laptop screens | Windows WMI brightness control |
 
-If a display is unavailable, enable DDC/CI in its on-screen menu when the option exists, then try another DisplayPort/HDMI cable or GPU port and choose **Refresh displays**.
+Displays that can't be controlled still appear, greyed out, and their tooltip explains why. MonitorCenter never saves settings to a monitor's internal memory.
 
-## Restore after reinstalling Windows
+### A display shows as unavailable
 
-The project is backed up in the private GitHub repository [0xMalaz/MonitorManager](https://github.com/0xMalaz/MonitorManager). Sign in with the GitHub account that owns the repository to access it.
+1. Turn on **DDC/CI** in the monitor's on-screen menu, if it has that option.
+2. Try a different cable (DisplayPort or HDMI) or a different port on your graphics card.
+3. Right-click the tray icon and choose **Refresh displays**.
 
-For a ready-to-run copy, download `MonitorCenter-Windows-x64.zip` from the [PC backup release](https://github.com/0xMalaz/MonitorManager/releases/tag/pc-backup-2026-10-01) and extract it into a permanent folder, for example `%LOCALAPPDATA%\Programs\MonitorCenter`. The executable is self-contained; running it does not require Git or the .NET SDK.
+Some monitors, docks, and adapters don't pass DDC/CI through at all.
 
-Personal settings are not uploaded to GitHub or included in the release archive. Before formatting your PC, copy `%LOCALAPPDATA%\MonitorCenter\settings.json` to a USB drive or another backup location if you want to keep your profiles and custom display names. After reinstalling Windows, restore that file to the same path before starting the app, creating the destination directory if needed. Monitor identities may change after reinstalling Windows or changing display connections; check any restored profiles against the connected displays.
+## Building from source
 
-Run `MonitorCenter.exe` from the permanent folder. Its first normal Release launch registers that location for Windows startup; you can change this through the tray menu.
-
-To restore the source for development, install Git and the .NET 10 SDK, then run:
+Requirements: Windows 11 x64 and the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
 
 ```powershell
 git clone https://github.com/0xMalaz/MonitorManager.git
 cd MonitorManager
-dotnet publish src\MonitorCenter\MonitorCenter.csproj -c Release -r win-x64 --self-contained true -o dist
-.\dist\MonitorCenter.exe
-```
-
-Generated files (`dist`, `bin`, `obj`, and `.artifacts`) are intentionally excluded from Git. The release archive preserves the executable separately from the source; personal settings require your own backup.
-
-## Build and test
-
-Requirements: Windows 11 x64 and the .NET 10 SDK.
-
-```powershell
 dotnet build MonitorCenter.sln -c Release
 dotnet test MonitorCenter.sln -c Release --no-build
 dotnet publish src\MonitorCenter\MonitorCenter.csproj -c Release -r win-x64 --self-contained true -o dist
 ```
 
-Hardware discovery and brightness write/restore tests are opt-in so ordinary test runs never change monitor settings:
+The published app is `dist\MonitorCenter.exe`.
+
+### Hardware tests
+
+Tests that talk to real monitors are skipped by default, so a normal test run never changes your monitor settings. To run them:
 
 ```powershell
+# Read-only display discovery
 $env:MONITORCENTER_HARDWARE_TESTS = '1'
-dotnet test tests\MonitorCenter.Tests\MonitorCenter.Tests.csproj -c Release --filter "FullyQualifiedName~HardwareMonitorServiceTests"
 
+# Also change brightness slightly on each display, then restore it
 $env:MONITORCENTER_HARDWARE_WRITE_TESTS = '1'
-dotnet test tests\MonitorCenter.Tests\MonitorCenter.Tests.csproj -c Release --filter "FullyQualifiedName~HardwareMonitorServiceTests"
+
+dotnet test tests\MonitorCenter.Tests\MonitorCenter.Tests.csproj -c Release --filter "FullyQualifiedName~HardwareIntegrationTests"
 ```
+
+## Contributing
+
+Issues and pull requests are welcome. Please run the tests before opening a pull request.
+
+## License
+
+MonitorCenter is released under the [MIT License](LICENSE).
