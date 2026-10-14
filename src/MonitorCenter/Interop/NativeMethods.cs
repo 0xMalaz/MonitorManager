@@ -8,6 +8,13 @@ internal static class NativeMethods
 {
     internal const int WM_DISPLAYCHANGE = 0x007E;
     internal const int WM_DEVICECHANGE = 0x0219;
+    internal const int WM_POWERBROADCAST = 0x0218;
+    internal const int WM_WTSSESSION_CHANGE = 0x02B1;
+    internal const int PBT_APMRESUMESUSPEND = 0x0007;
+    internal const int PBT_APMRESUMEAUTOMATIC = 0x0012;
+    internal const int PBT_POWERSETTINGCHANGE = 0x8013;
+    internal const int WTS_SESSION_UNLOCK = 0x8;
+    internal const uint NOTIFY_FOR_THIS_SESSION = 0;
     internal const int GWL_EXSTYLE = -20;
     internal const long WS_EX_TOOLWINDOW = 0x00000080L;
     internal const long WS_EX_APPWINDOW = 0x00040000L;
@@ -43,6 +50,7 @@ internal static class NativeMethods
     internal const uint ICON_RESOURCE_VERSION = 0x00030000;
     internal const uint LR_DEFAULTCOLOR = 0x00000000;
     internal static readonly Guid GUID_DEVINTERFACE_MONITOR = new("E6F07B5F-EE97-4A90-B076-33F57BF4EAA7");
+    internal static readonly Guid GUID_CONSOLE_DISPLAY_STATE = new("6FE69556-704A-47A0-8F24-C28D936FDA47");
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct Rect
@@ -197,6 +205,24 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool UnregisterDeviceNotification(IntPtr handle);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern IntPtr RegisterPowerSettingNotification(
+        IntPtr recipient,
+        ref Guid powerSetting,
+        uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool UnregisterPowerSettingNotification(IntPtr handle);
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool WTSRegisterSessionNotification(IntPtr window, uint flags);
+
+    [DllImport("wtsapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool WTSUnRegisterSessionNotification(IntPtr window);
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern IntPtr CreateIconFromResourceEx(

@@ -10,6 +10,9 @@ internal sealed class MonitorService : IAsyncDisposable
     private readonly WmiMonitorReader _wmiReader = new();
     private Dictionary<string, MonitorEndpoint> _endpoints = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, string> _displayNames = new(StringComparer.OrdinalIgnoreCase);
+
+    // The DDC/CI command each display last answered, kept when it stops answering so it is asked that first again.
+    private readonly Dictionary<string, BrightnessBackendKind> _lastDdcBackends = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
     /// <param name="reprobeKnownDisplays">
@@ -28,27 +31,88 @@ internal sealed class MonitorService : IAsyncDisposable
             IReadOnlyDictionary<string, MonitorEndpoint> known = reprobeKnownDisplays
                 ? new Dictionary<string, MonitorEndpoint>()
                 : _endpoints;
-            var discovered = await Task.Run(() => DiscoverCore(known), cancellationToken).ConfigureAwait(false);
-            var snapshots = MonitorLabeler.OrderAndLabel(discovered.Values.Select(endpoint => endpoint.ToSnapshot()));
-            var oldEndpoints = _endpoints;
-            _endpoints = discovered;
-            _displayNames = snapshots.ToDictionary(
-                snapshot => snapshot.Id,
-                snapshot => snapshot.DisplayName,
-                StringComparer.OrdinalIgnoreCase);
-
-            foreach (var endpoint in oldEndpoints.Values)
-            {
-                endpoint.Dispose();
-            }
-
-            return snapshots;
+            return await DiscoverUnderGateAsync(known, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _operationGate.Release();
         }
     }
+
+    /// <summary>
+    /// Asks the displays that did not answer DDC/CI again, on the handles they already have, leaving working
+    /// displays alone. Runs a full discovery instead when one of them has no handle to ask.
+    /// </summary>
+    public async Task<IReadOnlyList<MonitorSnapshot>> RecheckUnavailableAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            var unavailable = _endpoints.Values
+                .Where(endpoint => endpoint.Status != MonitorSupportStatus.Ready)
+                .ToArray();
+            if (unavailable.Any(endpoint => !endpoint.CanReconnect))
+            {
+                return await DiscoverUnderGateAsync(_endpoints, cancellationToken).ConfigureAwait(false);
+            }
+
+            await Task.Run(() =>
+            {
+                foreach (var endpoint in unavailable)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    endpoint.TryReconnect(LastDdcBackend(endpoint.Id));
+                }
+            }, cancellationToken).ConfigureAwait(false);
+
+            return PublishSnapshots();
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    private async Task<IReadOnlyList<MonitorSnapshot>> DiscoverUnderGateAsync(
+        IReadOnlyDictionary<string, MonitorEndpoint> known,
+        CancellationToken cancellationToken)
+    {
+        var discovered = await Task.Run(() => DiscoverCore(known), cancellationToken).ConfigureAwait(false);
+        var oldEndpoints = _endpoints;
+        _endpoints = discovered;
+        var snapshots = PublishSnapshots();
+
+        foreach (var endpoint in oldEndpoints.Values)
+        {
+            endpoint.Dispose();
+        }
+
+        return snapshots;
+    }
+
+    private IReadOnlyList<MonitorSnapshot> PublishSnapshots()
+    {
+        foreach (var endpoint in _endpoints.Values)
+        {
+            if (endpoint.Status == MonitorSupportStatus.Ready &&
+                endpoint.Backend is BrightnessBackendKind.DdcHighLevel or BrightnessBackendKind.DdcVcp)
+            {
+                _lastDdcBackends[endpoint.Id] = endpoint.Backend;
+            }
+        }
+
+        var snapshots = MonitorLabeler.OrderAndLabel(_endpoints.Values.Select(endpoint => endpoint.ToSnapshot()));
+        _displayNames = snapshots.ToDictionary(
+            snapshot => snapshot.Id,
+            snapshot => snapshot.DisplayName,
+            StringComparer.OrdinalIgnoreCase);
+        return snapshots;
+    }
+
+    private BrightnessBackendKind LastDdcBackend(string id) =>
+        _lastDdcBackends.TryGetValue(id, out var backend) ? backend : BrightnessBackendKind.None;
 
     public async Task<BrightnessResult> SetBrightnessAsync(
         string monitorId,
@@ -202,9 +266,10 @@ internal sealed class MonitorService : IAsyncDisposable
             var physical = physicalMonitors[index];
             var handle = new SafePhysicalMonitorHandle(physical.Handle);
             var id = physicalMonitors.Length == 1 ? stableBaseId : $"{stableBaseId}:{index}";
-            var knownBackend = known.TryGetValue(id, out var knownEndpoint)
+            var knownBackend = known.TryGetValue(id, out var knownEndpoint) &&
+                               knownEndpoint.Backend != BrightnessBackendKind.None
                 ? knownEndpoint.Backend
-                : BrightnessBackendKind.None;
+                : LastDdcBackend(id);
 
             try
             {

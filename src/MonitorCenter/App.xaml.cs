@@ -46,7 +46,6 @@ public partial class App : System.Windows.Application
                              Path.Combine(AppContext.BaseDirectory, "MonitorCenter.exe");
         _startupRegistration = new StartupRegistration(executablePath);
         _updates = new UpdateCoordinator(new VelopackAppUpdater());
-        _updates.UpdateReady += OnUpdateReady;
         _updates.RestartRequested += OnExitRequested;
         _trayIcon = new TrayIconController(_flyoutWindow, _startupRegistration, _updates);
         _trayIcon.ExitRequested += OnExitRequested;
@@ -79,19 +78,10 @@ public partial class App : System.Windows.Application
         }
 #endif
 
-        _updates.StartBackgroundChecks();
-
         if (!options.IsStartupLaunch)
         {
             await _flyoutWindow.ShowFlyoutAsync();
         }
-    }
-
-    private void OnUpdateReady(object? sender, string version)
-    {
-        _trayIcon?.ShowInfo(
-            $"MonitorCenter {version} is ready. Click here to restart and update.",
-            () => _ = _updates?.CheckNowAsync());
     }
 
     private void OnActivationRequested()
@@ -121,7 +111,6 @@ public partial class App : System.Windows.Application
 
         if (_updates is not null)
         {
-            _updates.UpdateReady -= OnUpdateReady;
             _updates.RestartRequested -= OnExitRequested;
             _updates.Dispose();
             _updates = null;
