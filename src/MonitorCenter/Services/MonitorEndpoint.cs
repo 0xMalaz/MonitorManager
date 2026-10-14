@@ -67,40 +67,7 @@ internal sealed class MonitorEndpoint : IDisposable
         SafePhysicalMonitorHandle handle,
         BrightnessBackendKind knownBackend = BrightnessBackendKind.None)
     {
-        // A display already known to answer only MCCS VCP 0x10 skips the high-level probe it rejects.
-        if (knownBackend == BrightnessBackendKind.DdcVcp &&
-            TryReadVcpBrightness(handle, out var vcpCurrent, out var vcpMaximum))
-        {
-            return CreateVcp(vcpCurrent, vcpMaximum);
-        }
-
-        if (NativeMethods.GetMonitorBrightness(handle, out var minimum, out var current, out var maximum) &&
-            maximum > minimum)
-        {
-            return new MonitorEndpoint(
-                id,
-                friendlyName,
-                serial,
-                displayDevice,
-                bounds,
-                handle,
-                null,
-                null,
-                minimum,
-                maximum,
-                current,
-                BrightnessBackendKind.DdcHighLevel,
-                MonitorSupportStatus.Ready,
-                null);
-        }
-
-        if (knownBackend != BrightnessBackendKind.DdcVcp &&
-            TryReadVcpBrightness(handle, out current, out maximum))
-        {
-            return CreateVcp(current, maximum);
-        }
-
-        return new MonitorEndpoint(
+        var endpoint = new MonitorEndpoint(
             id,
             friendlyName,
             serial,
@@ -115,31 +82,61 @@ internal sealed class MonitorEndpoint : IDisposable
             BrightnessBackendKind.None,
             MonitorSupportStatus.Unavailable,
             UnavailableMessage);
-
-        MonitorEndpoint CreateVcp(uint vcpCurrent, uint vcpMaximum) => new(
-            id,
-            friendlyName,
-            serial,
-            displayDevice,
-            bounds,
-            handle,
-            null,
-            null,
-            0,
-            vcpMaximum,
-            vcpCurrent,
-            BrightnessBackendKind.DdcVcp,
-            MonitorSupportStatus.Ready,
-            null);
+        endpoint.ProbeDdc(knownBackend);
+        return endpoint;
     }
 
-    private static bool TryReadVcpBrightness(SafePhysicalMonitorHandle handle, out uint current, out uint maximum) =>
+    /// <summary>True when this display did not answer DDC/CI but can be asked again on the handle it already has.</summary>
+    public bool CanReconnect => Status != MonitorSupportStatus.Ready && _physicalHandle is not null;
+
+    /// <summary>Probes a display that did not answer DDC/CI again, without touching other displays.</summary>
+    /// <returns>True when the display now answers.</returns>
+    public bool TryReconnect(BrightnessBackendKind knownBackend)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (CanReconnect)
+        {
+            ProbeDdc(knownBackend);
+        }
+
+        return Status == MonitorSupportStatus.Ready;
+    }
+
+    private void ProbeDdc(BrightnessBackendKind knownBackend)
+    {
+        var handle = _physicalHandle!;
+        if (DdcBrightnessProbe.Probe(
+                () => ReadHighLevelBrightness(handle),
+                () => ReadVcpBrightness(handle),
+                knownBackend,
+                Thread.Sleep) is not { } reading)
+        {
+            return;
+        }
+
+        Backend = reading.Backend;
+        MinimumRaw = reading.Minimum;
+        MaximumRaw = reading.Maximum;
+        CurrentRaw = reading.Current;
+        Status = MonitorSupportStatus.Ready;
+        ErrorMessage = null;
+    }
+
+    private static DdcBrightnessReading? ReadHighLevelBrightness(SafePhysicalMonitorHandle handle) =>
+        NativeMethods.GetMonitorBrightness(handle, out var minimum, out var current, out var maximum)
+            ? new DdcBrightnessReading(BrightnessBackendKind.DdcHighLevel, minimum, current, maximum)
+            : null;
+
+    private static DdcBrightnessReading? ReadVcpBrightness(SafePhysicalMonitorHandle handle) =>
         NativeMethods.GetVCPFeatureAndVCPFeatureReply(
             handle,
             NativeMethods.VCP_BRIGHTNESS,
             IntPtr.Zero,
-            out current,
-            out maximum) && maximum > 0;
+            out var current,
+            out var maximum)
+            ? new DdcBrightnessReading(BrightnessBackendKind.DdcVcp, 0, current, maximum)
+            : null;
 
     public static MonitorEndpoint CreateWmi(
         string id,

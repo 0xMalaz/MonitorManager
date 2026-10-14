@@ -12,6 +12,8 @@ internal enum MonitorSupportStatus
 {
     Ready,
     Unavailable,
+    /// <summary>The display worked earlier and stopped answering; it is being asked again.</summary>
+    Reconnecting,
     Disconnected,
     Error
 }

@@ -51,6 +51,55 @@ public sealed class ApplicationBehaviorTests
     }
 
     [TestMethod]
+    public void WakeAndUnlock_TriggerRefresh_ButOtherPowerAndSessionEventsDoNot()
+    {
+        const int suspend = 0x0004;
+        const int sessionLock = 0x7;
+
+        Assert.IsTrue(IsWake(NativeMethods.WM_POWERBROADCAST, NativeMethods.PBT_APMRESUMEAUTOMATIC));
+        Assert.IsTrue(IsWake(NativeMethods.WM_POWERBROADCAST, NativeMethods.PBT_APMRESUMESUSPEND));
+        Assert.IsTrue(IsWake(NativeMethods.WM_WTSSESSION_CHANGE, NativeMethods.WTS_SESSION_UNLOCK));
+        Assert.IsFalse(IsWake(NativeMethods.WM_POWERBROADCAST, suspend));
+        Assert.IsFalse(IsWake(NativeMethods.WM_WTSSESSION_CHANGE, sessionLock));
+        Assert.IsFalse(IsWake(NativeMethods.WM_DEVICECHANGE, NativeMethods.PBT_APMRESUMEAUTOMATIC));
+
+        static bool IsWake(int message, int eventType) =>
+            MonitorCenter.UI.FlyoutWindow.IsWakeOrUnlock(message, new IntPtr(eventType));
+    }
+
+    [TestMethod]
+    public void DisplayState_OnlyTurningOnFromOffTriggersRefresh()
+    {
+        int? state = null;
+
+        Assert.IsFalse(Notify(NativeMethods.GUID_CONSOLE_DISPLAY_STATE, 1, ref state), "Initial state report");
+        Assert.IsFalse(Notify(NativeMethods.GUID_CONSOLE_DISPLAY_STATE, 2, ref state), "Dimmed");
+        Assert.IsFalse(Notify(NativeMethods.GUID_CONSOLE_DISPLAY_STATE, 0, ref state), "Off");
+        Assert.IsTrue(Notify(NativeMethods.GUID_CONSOLE_DISPLAY_STATE, 1, ref state), "On after off");
+        Assert.IsFalse(Notify(Guid.NewGuid(), 1, ref state), "Another power setting");
+
+        static bool Notify(Guid setting, int value, ref int? displayState)
+        {
+            var buffer = Marshal.AllocHGlobal(24);
+            try
+            {
+                Marshal.StructureToPtr(setting, buffer, fDeleteOld: false);
+                Marshal.WriteInt32(buffer, 16, sizeof(int));
+                Marshal.WriteInt32(buffer, 20, value);
+                return MonitorCenter.UI.FlyoutWindow.IsDisplayTurnedOn(
+                    NativeMethods.WM_POWERBROADCAST,
+                    new IntPtr(NativeMethods.PBT_POWERSETTINGCHANGE),
+                    buffer,
+                    ref displayState);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+    }
+
+    [TestMethod]
     public void CommandLine_RecognizesStartupCaseInsensitively()
     {
         Assert.IsTrue(CommandLineOptions.Parse(new[] { "--STARTUP" }).IsStartupLaunch);

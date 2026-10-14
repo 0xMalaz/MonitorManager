@@ -32,9 +32,7 @@ Version 1.0.0 was a plain zip without an updater. Exit it from the tray menu, th
 
 ## Updates
 
-MonitorCenter checks for a new release a couple of minutes after it starts, then once a day. When it finds one, it downloads it in the background and shows a notification; click the notification to restart into the new version. If you don't, the update is installed the next time MonitorCenter starts.
-
-To check right away, right-click the tray icon and choose **Check for updates**. The item shows the progress, then either **No new updates** or **Updated!**, after which MonitorCenter restarts.
+MonitorCenter only checks for, downloads and installs updates when you ask it to. Right-click the tray icon and choose **Check for updates**. The item shows the progress, then either **No new updates** or **Updated!**, after which MonitorCenter restarts.
 
 ## Usage
 
@@ -55,6 +53,8 @@ Profiles and display names are saved to `%LOCALAPPDATA%\MonitorCenter\settings.j
 | Built-in laptop screens | Windows WMI brightness control |
 
 Displays that can't be controlled still appear, greyed out, and their tooltip explains why. MonitorCenter never saves settings to a monitor's internal memory.
+
+Some monitors drop part of their DDC/CI replies. MonitorCenter retries each display a few times when it detects it, then asks a display that didn't answer again after 1, 3 and 10 seconds. It also refreshes a few seconds after the PC wakes up, the screens turn back on, or you unlock it. A display that worked earlier and stops answering shows **Reconnecting…** while these retries run.
 
 ### A display shows as unavailable
 
@@ -104,7 +104,7 @@ Releases are built by the [Release workflow](.github/workflows/release.yml) with
    git push origin v1.2.0
    ```
 
-The workflow checks that the tag matches the project version, runs the tests, and publishes the GitHub release. Installed copies pick it up within a day, or straight away with **Check for updates**.
+The workflow checks that the tag matches the project version, runs the tests, and publishes the GitHub release. Installed copies get it when their user chooses **Check for updates**.
 
 To try a release locally before publishing it, build it into a folder and point an installed copy at that folder:
 

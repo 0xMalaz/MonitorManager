@@ -11,8 +11,10 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
-        // Velopack handles install, update and uninstall events here and exits early for them.
+        // Velopack handles install, update and uninstall events here and exits early for them. Updates are only
+        // installed when the user asks for them from the tray menu, never on their own at startup.
         VelopackApp.Build()
+            .SetAutoApplyOnStartup(false)
             .OnRestarted(version => UpdatedToVersion = version.ToString())
             .OnBeforeUninstallFastCallback(_ => new StartupRegistration(Environment.ProcessPath!).Unregister())
             .Run();

@@ -16,6 +16,8 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
     private readonly Dispatcher _dispatcher;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly SemaphoreSlim _profileGate = new(1, 1);
+    private readonly DisplayRecoveryScheduler _recovery;
+    private readonly HashSet<string> _controllableIds = new(StringComparer.OrdinalIgnoreCase);
     private bool _isRefreshing;
     private bool _disposed;
     private string _emptyMessage = "No displays detected.";
@@ -30,6 +32,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         _monitorService = monitorService;
         _dispatcher = dispatcher;
         _settingsStore = settingsStore ?? new AppSettingsStore();
+        _recovery = new DisplayRecoveryScheduler(RecheckUnavailableAsync);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -96,15 +99,49 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
     public async Task RefreshAsync(bool reprobeKnownDisplays = true, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        await RefreshCoreAsync(
+                token => _monitorService.DiscoverAsync(reprobeKnownDisplays, token),
+                isLastRecheck: false,
+                showProgress: true,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Asks the displays that did not answer again; returns true when none needs recovering any more.</summary>
+    private async Task<bool> RecheckUnavailableAsync(bool isLastRecheck, CancellationToken cancellationToken)
+    {
+        if (_disposed)
+        {
+            return true;
+        }
+
+        return !await RefreshCoreAsync(
+                _monitorService.RecheckUnavailableAsync,
+                isLastRecheck,
+                showProgress: false,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <returns>True when a display could not be controlled and rechecks are scheduled for it.</returns>
+    private async Task<bool> RefreshCoreAsync(
+        Func<CancellationToken, Task<IReadOnlyList<MonitorSnapshot>>> discover,
+        bool isLastRecheck,
+        bool showProgress,
+        CancellationToken cancellationToken)
+    {
         await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await _dispatcher.InvokeAsync(() => IsRefreshing = true);
+            if (showProgress)
+            {
+                await _dispatcher.InvokeAsync(() => IsRefreshing = true);
+            }
+
             IReadOnlyList<MonitorSnapshot> snapshots;
             try
             {
-                snapshots = await _monitorService.DiscoverAsync(reprobeKnownDisplays, cancellationToken)
-                    .ConfigureAwait(false);
+                snapshots = await discover(cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -113,8 +150,17 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
             catch (Exception exception)
             {
                 await _dispatcher.InvokeAsync(() => EmptyMessage = $"Display detection failed: {exception.Message}");
-                return;
+                return false;
             }
+
+            var needsRecovery = !isLastRecheck && snapshots.Any(snapshot => !snapshot.IsControllable);
+            if (needsRecovery && !_disposed)
+            {
+                _ = _recovery.StartAsync();
+            }
+
+            snapshots = DisplayRecoveryScheduler.MarkReconnecting(snapshots, _controllableIds, needsRecovery);
+            _controllableIds.UnionWith(snapshots.Where(snapshot => snapshot.IsControllable).Select(snapshot => snapshot.Id));
 
             Dictionary<string, bool> previouslyControllable = [];
             List<MonitorRowViewModel> removedRows = [];
@@ -143,10 +189,15 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
                                !wasControllable))
                 .ToArray());
             await ApplyActiveProfileToRowsAsync(reconnectedRows, cancellationToken).ConfigureAwait(false);
+            return needsRecovery;
         }
         finally
         {
-            await _dispatcher.InvokeAsync(() => IsRefreshing = false);
+            if (showProgress)
+            {
+                await _dispatcher.InvokeAsync(() => IsRefreshing = false);
+            }
+
             _refreshGate.Release();
         }
     }
@@ -481,6 +532,10 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         }
 
         _disposed = true;
+        _recovery.Dispose();
+
+        // Let a refresh or recheck that is already running finish before its gate goes away.
+        await _refreshGate.WaitAsync();
         foreach (var row in Monitors.ToArray())
         {
             await row.DisposeAsync();

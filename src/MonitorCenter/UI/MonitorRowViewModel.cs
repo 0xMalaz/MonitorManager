@@ -49,7 +49,9 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
     public bool IsControllable => Snapshot.IsControllable;
     public bool HasStatus => !string.IsNullOrWhiteSpace(StatusText);
     public string? CompactStatusText => HasStatus
-        ? IsControllable ? "Try again" : "Unavailable"
+        ? Snapshot.Status == MonitorSupportStatus.Reconnecting ? "Reconnecting…"
+        : IsControllable ? "Try again"
+        : "Unavailable"
         : null;
     public bool HasCompactStatus => !string.IsNullOrWhiteSpace(CompactStatusText);
 
@@ -73,7 +75,7 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
         get
         {
             var serial = string.IsNullOrWhiteSpace(Snapshot.Serial) ? "Unknown" : Snapshot.Serial;
-            var backend = Snapshot.Backend switch
+            var backend = Snapshot.Status == MonitorSupportStatus.Reconnecting ? "Reconnecting" : Snapshot.Backend switch
             {
                 BrightnessBackendKind.DdcHighLevel => "DDC/CI",
                 BrightnessBackendKind.DdcVcp => "DDC/CI VCP 0x10",

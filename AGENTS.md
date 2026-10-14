@@ -19,7 +19,7 @@ How it fits together:
 
 - `src/MonitorCenter/Program.cs` is the entry point. `VelopackApp.Build()...Run()` must stay the first thing in `Main`, before WPF starts; Velopack runs install, update and uninstall hooks there and may exit the process. `App.xaml` is compiled as a `Page` and `StartupObject` is set in the csproj for this reason; don't turn it back into an `ApplicationDefinition`.
 - `Services/AppUpdater.cs` (`IAppUpdater`, `VelopackAppUpdater`) is the only code that talks to Velopack. Updates are applied with `WaitExitThenApplyUpdates` followed by the app's normal graceful shutdown (`App.OnExitRequested`), so the tray icon and single-instance mutex are released before the updater restarts the app with `--startup`. Don't switch to `ApplyUpdatesAndRestart`, which exits the process abruptly.
-- `Services/UpdateCoordinator.cs` drives the tray menu item text ("Check for updates" → "Checking for updates…" → "No new updates" / "Updating… n%" → "Updated!") and the background check (2 minutes after launch, then every 24 hours). It is unit-tested through a fake `IAppUpdater` in `tests/MonitorCenter.Tests/UpdateCoordinatorTests.cs`; extend those tests when changing its behaviour.
+- `Services/UpdateCoordinator.cs` drives the tray menu item text ("Check for updates" → "Checking for updates…" → "No new updates" / "Updating… n%" → "Updated!"). Updates are checked, downloaded and installed only when the user clicks that item: there are no background checks, and `Program.cs` turns off Velopack's auto-apply on startup. Keep it that way unless the user asks otherwise. It is unit-tested through a fake `IAppUpdater` in `tests/MonitorCenter.Tests/UpdateCoordinatorTests.cs`; extend those tests when changing its behaviour.
 - `UI/TrayIconController.cs` hosts the menu item (`StaysOpenOnClick`, header bound to `MenuText`) and clickable notifications.
 - `StartupRegistration.Unregister()` runs at uninstall and only removes the startup entry if it points at the copy being uninstalled.
 
@@ -37,7 +37,7 @@ Releases are published by `.github/workflows/release.yml` when a `vX.Y.Z` tag is
 1. Raise `<Version>` in the csproj and merge that to `main`.
 2. `git tag vX.Y.Z` on that commit on `main`, then `git push origin vX.Y.Z`.
 
-Only tag or publish a release when the user asks: a published release is installed automatically on every user's machine. Never hand-edit or delete assets of a published release (`releases.win.json`, `*.nupkg`); installed copies depend on them.
+Only tag or publish a release when the user asks: a published release is offered to every installed copy, and copies older than 1.2.0 download and install it on their own. Never hand-edit or delete assets of a published release (`releases.win.json`, `*.nupkg`); installed copies depend on them.
 
 ### Testing an update end to end
 

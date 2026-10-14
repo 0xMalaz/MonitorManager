@@ -17,8 +17,12 @@ public partial class FlyoutWindow : Window
     private readonly FlyoutViewModel _viewModel;
     private readonly SemaphoreSlim _visibilityGate = new(1, 1);
     private readonly DispatcherTimer _displayChangeTimer;
+    private readonly DispatcherTimer _wakeTimer;
     private HwndSource? _windowSource;
     private IntPtr _monitorNotification;
+    private IntPtr _displayStateNotification;
+    private bool _sessionNotificationRegistered;
+    private int? _displayState;
     private bool _isDisplayMenuOpen;
     private bool _allowClose;
     private bool _disposed;
@@ -45,6 +49,14 @@ public partial class FlyoutWindow : Window
         _displayChangeTimer.Tick += async (_, _) =>
         {
             _displayChangeTimer.Stop();
+            await RefreshAsync(reprobeKnownDisplays: false);
+        };
+
+        // Displays take a few seconds after waking before they answer DDC/CI again.
+        _wakeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        _wakeTimer.Tick += async (_, _) =>
+        {
+            _wakeTimer.Stop();
             await RefreshAsync(reprobeKnownDisplays: false);
         };
     }
@@ -239,7 +251,49 @@ public partial class FlyoutWindow : Window
             _displayChangeTimer.Stop();
             _displayChangeTimer.Start();
         }
+        else if (IsWakeOrUnlock(message, wParam) || IsDisplayTurnedOn(message, wParam, lParam, ref _displayState))
+        {
+            _wakeTimer.Stop();
+            _wakeTimer.Start();
+        }
         return IntPtr.Zero;
+    }
+
+    internal static bool IsWakeOrUnlock(int message, IntPtr wParam)
+    {
+        var eventType = unchecked((int)wParam.ToInt64());
+        return message switch
+        {
+            NativeMethods.WM_POWERBROADCAST =>
+                eventType is NativeMethods.PBT_APMRESUMEAUTOMATIC or NativeMethods.PBT_APMRESUMESUSPEND,
+            NativeMethods.WM_WTSSESSION_CHANGE => eventType == NativeMethods.WTS_SESSION_UNLOCK,
+            _ => false
+        };
+    }
+
+    /// <summary>
+    /// True when the console display state changes from off to on. Windows reports the current state as soon as
+    /// the notification is registered, which only records it.
+    /// </summary>
+    internal static bool IsDisplayTurnedOn(int message, IntPtr wParam, IntPtr lParam, ref int? displayState)
+    {
+        if (message != NativeMethods.WM_POWERBROADCAST ||
+            unchecked((int)wParam.ToInt64()) != NativeMethods.PBT_POWERSETTINGCHANGE ||
+            lParam == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        // POWERBROADCAST_SETTING: the setting GUID, the data length, then the data (0 off, 1 on, 2 dimmed).
+        var setting = Marshal.PtrToStructure<Guid>(lParam);
+        if (setting != NativeMethods.GUID_CONSOLE_DISPLAY_STATE || Marshal.ReadInt32(lParam, 16) < sizeof(int))
+        {
+            return false;
+        }
+
+        var previous = displayState;
+        displayState = Marshal.ReadInt32(lParam, 20);
+        return previous == 0 && displayState != 0;
     }
 
     internal static bool IsMonitorInterfaceChange(IntPtr wParam, IntPtr lParam)
@@ -273,6 +327,15 @@ public partial class FlyoutWindow : Window
             handle,
             ref filter,
             NativeMethods.DEVICE_NOTIFY_WINDOW_HANDLE);
+
+        var displayState = NativeMethods.GUID_CONSOLE_DISPLAY_STATE;
+        _displayStateNotification = NativeMethods.RegisterPowerSettingNotification(
+            handle,
+            ref displayState,
+            NativeMethods.DEVICE_NOTIFY_WINDOW_HANDLE);
+        _sessionNotificationRegistered = NativeMethods.WTSRegisterSessionNotification(
+            handle,
+            NativeMethods.NOTIFY_FOR_THIS_SESSION);
     }
 
     private void ApplySystemBackdrop(IntPtr handle)
@@ -334,11 +397,22 @@ public partial class FlyoutWindow : Window
         _disposed = true;
         _allowClose = true;
         _displayChangeTimer.Stop();
+        _wakeTimer.Stop();
         ThemeManager.ThemeChanged -= OnThemeChanged;
         if (_monitorNotification != IntPtr.Zero)
         {
             NativeMethods.UnregisterDeviceNotification(_monitorNotification);
             _monitorNotification = IntPtr.Zero;
+        }
+        if (_displayStateNotification != IntPtr.Zero)
+        {
+            NativeMethods.UnregisterPowerSettingNotification(_displayStateNotification);
+            _displayStateNotification = IntPtr.Zero;
+        }
+        if (_sessionNotificationRegistered)
+        {
+            NativeMethods.WTSUnRegisterSessionNotification(new WindowInteropHelper(this).Handle);
+            _sessionNotificationRegistered = false;
         }
         _windowSource?.RemoveHook(WindowProcedure);
         _windowSource = null;

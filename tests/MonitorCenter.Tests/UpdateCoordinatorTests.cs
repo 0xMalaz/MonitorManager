@@ -72,20 +72,22 @@ public sealed class UpdateCoordinatorTests
     }
 
     [TestMethod]
-    public async Task BackgroundCheck_DownloadsSilentlyAndOffersRestart()
+    public async Task Coordinator_NeverChecksUntilTheUserAsks()
     {
         var updater = new FakeUpdater { AvailableVersion = "1.1.0" };
-        using var coordinator = new UpdateCoordinator(updater, NoDelay);
-        var texts = RecordMenuText(coordinator);
-        string? readyVersion = null;
-        coordinator.UpdateReady += (_, version) => readyVersion = version;
+        var delays = new List<TimeSpan>();
+        using var coordinator = new UpdateCoordinator(updater, (delay, _) =>
+        {
+            delays.Add(delay);
+            return Task.CompletedTask;
+        });
 
-        await coordinator.CheckInBackgroundAsync();
+        await Task.Yield();
 
-        Assert.AreEqual("1.1.0", readyVersion);
-        Assert.AreEqual(0, updater.ApplyCount);
-        Assert.IsFalse(texts.Contains(UpdateCoordinator.CheckingText));
-        Assert.AreEqual("Restart to update to 1.1.0", coordinator.MenuText);
+        Assert.AreEqual(0, updater.CheckCount);
+        Assert.AreEqual(0, updater.DownloadCount);
+        Assert.AreEqual(0, delays.Count);
+        Assert.AreEqual(UpdateCoordinator.IdleText, coordinator.MenuText);
     }
 
     [TestMethod]
@@ -107,11 +109,11 @@ public sealed class UpdateCoordinatorTests
         var updater = new FakeUpdater { CheckGate = release.Task };
         using var coordinator = new UpdateCoordinator(updater, NoDelay);
 
-        var background = coordinator.CheckInBackgroundAsync();
-        var manual = coordinator.CheckNowAsync();
+        var first = coordinator.CheckNowAsync();
+        var second = coordinator.CheckNowAsync();
         Assert.AreEqual(UpdateCoordinator.CheckingText, coordinator.MenuText);
         release.SetResult();
-        await Task.WhenAll(background, manual);
+        await Task.WhenAll(first, second);
 
         Assert.AreEqual(1, updater.CheckCount);
     }
