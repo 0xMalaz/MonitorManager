@@ -13,16 +13,28 @@ MonitorCenter lives in the notification area. It has no main window and stays ou
 - Rename displays so they're easy to tell apart.
 - Follows the Windows light and dark theme.
 - Picks up monitors as they're connected or disconnected.
+- Keeps itself up to date from GitHub releases.
 
 ## Install
 
-1. Download `MonitorCenter-Windows-x64.zip` from the [latest release](https://github.com/0xMalaz/MonitorManager/releases/latest).
-2. Extract it to a permanent folder, for example `%LOCALAPPDATA%\Programs\MonitorCenter`.
-3. Run `MonitorCenter.exe`.
+1. Download [`MonitorCenter-Setup.exe`](https://github.com/0xMalaz/MonitorManager/releases/latest/download/MonitorCenter-Setup.exe) from the [latest release](https://github.com/0xMalaz/MonitorManager/releases/latest).
+2. Run it. MonitorCenter installs for your user account only, so it doesn't need administrator rights, and adds a Start menu shortcut.
 
-The executable is self-contained, so you don't need to install .NET.
+The app is self-contained, so you don't need to install .NET. Windows SmartScreen may warn you the first time, because the installer isn't code-signed; choose **More info** and then **Run anyway**.
 
 When you start it normally for the first time, MonitorCenter adds itself to Windows startup for your user account. You can turn this off with **Start with Windows** in the tray menu.
+
+To uninstall, use **Settings > Apps > Installed apps**. Your profiles and display names are kept.
+
+### Updating from 1.0.0
+
+Version 1.0.0 was a plain zip without an updater. Exit it from the tray menu, then install with `MonitorCenter-Setup.exe` as above. You can delete the old folder afterwards. Your settings carry over.
+
+## Updates
+
+MonitorCenter checks for a new release a couple of minutes after it starts, then once a day. When it finds one, it downloads it in the background and shows a notification; click the notification to restart into the new version. If you don't, the update is installed the next time MonitorCenter starts.
+
+To check right away, right-click the tray icon and choose **Check for updates**. The item shows the progress, then either **No new updates** or **Updated!**, after which MonitorCenter restarts.
 
 ## Usage
 
@@ -31,7 +43,7 @@ When you start it normally for the first time, MonitorCenter adds itself to Wind
 - **Rename a display:** click the **...** button on its square and choose **Rename Display**.
 - **Profiles:** choose **New Profile**, enter a name, and choose **Save** to store the current brightness of every display. Click a profile at the top of the flyout to apply it.
 - **Close the flyout:** press **Escape**, click elsewhere, or click the tray icon again.
-- **Tray menu:** right-click the icon to refresh displays, toggle **Start with Windows**, or exit.
+- **Tray menu:** right-click the icon to refresh displays, toggle **Start with Windows**, check for updates, or exit.
 
 Profiles and display names are saved to `%LOCALAPPDATA%\MonitorCenter\settings.json`.
 
@@ -64,7 +76,7 @@ dotnet test MonitorCenter.sln -c Release --no-build
 dotnet publish src\MonitorCenter\MonitorCenter.csproj -c Release -r win-x64 --self-contained true -o dist
 ```
 
-The published app is `dist\MonitorCenter.exe`.
+The published app is `dist\MonitorCenter.exe`. Builds run this way can't update themselves; **Check for updates** says **Updates need the installed app**.
 
 ### Hardware tests
 
@@ -79,6 +91,30 @@ $env:MONITORCENTER_HARDWARE_WRITE_TESTS = '1'
 
 dotnet test tests\MonitorCenter.Tests\MonitorCenter.Tests.csproj -c Release --filter "FullyQualifiedName~HardwareIntegrationTests"
 ```
+
+## Releasing
+
+Releases are built by the [Release workflow](.github/workflows/release.yml) with [Velopack](https://velopack.io), which produces the installer and the update packages that installed copies download.
+
+1. Raise `<Version>` in `src/MonitorCenter/MonitorCenter.csproj`, for example to `1.2.0`, and commit it to `main`.
+2. Tag that commit and push the tag:
+
+   ```powershell
+   git tag v1.2.0
+   git push origin v1.2.0
+   ```
+
+The workflow checks that the tag matches the project version, runs the tests, and publishes the GitHub release. Installed copies pick it up within a day, or straight away with **Check for updates**.
+
+To try a release locally before publishing it, build it into a folder and point an installed copy at that folder:
+
+```powershell
+./tools/Build-Release.ps1 -Version 1.2.0 -OutputDir C:\Temp\feed
+$env:MONITORCENTER_UPDATE_SOURCE = 'C:\Temp\feed'
+& "$env:LOCALAPPDATA\0xMalaz.MonitorCenter\MonitorCenter.exe"
+```
+
+Don't change the Velopack pack id (`0xMalaz.MonitorCenter`) in `tools/Build-Release.ps1`; installed copies use it to find their updates.
 
 ## Contributing
 

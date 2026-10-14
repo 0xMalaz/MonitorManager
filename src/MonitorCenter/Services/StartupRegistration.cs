@@ -58,6 +58,17 @@ internal sealed class StartupRegistration
         }
     }
 
+    /// <summary>
+    /// Removes the Windows startup entry if it launches this executable, so uninstalling one copy
+    /// leaves another copy's entry alone.
+    /// </summary>
+    public void Unregister()
+    {
+        if (!IsEnabled) return;
+        using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
+        key?.DeleteValue(ValueName, throwOnMissingValue: false);
+    }
+
     internal static string BuildCommand(string executablePath)
     {
         return $"\"{Path.GetFullPath(executablePath)}\" --startup";

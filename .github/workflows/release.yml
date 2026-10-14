@@ -1,0 +1,79 @@
+name: Release
+
+# Pushing a version tag (for example v1.1.0) builds, tests and publishes a GitHub release that
+# installed copies of MonitorCenter pick up through "Check for updates".
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Check the tag matches the project version
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          [xml] $project = Get-Content src/MonitorCenter/MonitorCenter.csproj
+          $projectVersion = @($project.Project.PropertyGroup.Version | Where-Object { $_ })[0]
+          if ($projectVersion -ne $version) {
+            throw "Tag v$version does not match <Version>$projectVersion</Version> in src/MonitorCenter/MonitorCenter.csproj."
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Test
+        run: dotnet test MonitorCenter.sln -c Release
+
+      - name: Download the previous release for delta updates
+        shell: pwsh
+        run: |
+          dotnet tool restore
+          dotnet vpk download github --repoUrl $env:REPO_URL --token $env:GH_TOKEN --outputDir .artifacts/releases
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning 'No previous Velopack release was found, so this release has no delta package.'
+            $global:LASTEXITCODE = 0
+          }
+
+      - name: Build the installer and update packages
+        shell: pwsh
+        run: ./tools/Build-Release.ps1 -Version $env:VERSION
+
+      - name: Publish the GitHub release
+        shell: pwsh
+        run: |
+          $tag = "v$env:VERSION"
+          # A failed earlier run can leave a draft behind; start it over. Never touch a published release.
+          $existing = gh release view $tag --json isDraft --jq .isDraft 2>$null
+          if ($existing -eq 'false') { throw "Release $tag is already published." }
+          if ($existing -eq 'true') {
+            gh release delete $tag --yes
+            if ($LASTEXITCODE -ne 0) { throw "Deleting the leftover draft for $tag failed." }
+          }
+
+          # Upload as a draft first so installed copies only see the release once every asset is in place.
+          dotnet vpk upload github --repoUrl $env:REPO_URL --token $env:GH_TOKEN --outputDir .artifacts/releases `
+            --tag $tag --releaseName "MonitorCenter $env:VERSION"
+          if ($LASTEXITCODE -ne 0) { throw 'vpk upload failed.' }
+
+          # A stable name so the README can link to releases/latest/download/MonitorCenter-Setup.exe.
+          Copy-Item .artifacts/releases/0xMalaz.MonitorCenter-win-Setup.exe .artifacts/MonitorCenter-Setup.exe
+          gh release upload $tag .artifacts/MonitorCenter-Setup.exe --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Uploading MonitorCenter-Setup.exe failed.' }
+
+          $notes = gh api "repos/${{ github.repository }}/releases/generate-notes" -f tag_name=$tag --jq .body
+          if ($LASTEXITCODE -eq 0 -and $notes) { gh release edit $tag --notes ($notes -join "`n") }
+
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing the release failed.' }

@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Interop;
 using MonitorCenter.Interop;
 using MonitorCenter.Services;
@@ -20,19 +21,23 @@ internal sealed class TrayIconController : IDisposable
 
     private readonly FlyoutWindow _flyoutWindow;
     private readonly StartupRegistration _startupRegistration;
+    private readonly UpdateCoordinator _updates;
     private readonly HwndSource _messageSource;
     private readonly IntPtr _icon;
     private readonly WpfContextMenu _contextMenu;
     private readonly WpfMenuItem _startupItem;
     private readonly uint _taskbarCreatedMessage;
+    private Action? _notificationClicked;
     private bool _disposed;
 
     public TrayIconController(
         FlyoutWindow flyoutWindow,
-        StartupRegistration startupRegistration)
+        StartupRegistration startupRegistration,
+        UpdateCoordinator updates)
     {
         _flyoutWindow = flyoutWindow;
         _startupRegistration = startupRegistration;
+        _updates = updates;
         _icon = CreateTrayIcon();
 
         _messageSource = new HwndSource(new HwndSourceParameters("MonitorCenter.TrayIcon")
@@ -51,6 +56,11 @@ internal sealed class TrayIconController : IDisposable
         _startupItem = CreateMenuItem("Start with Windows");
         _startupItem.IsCheckable = true;
         _startupItem.Click += (_, _) => SetStartupPreference(_startupItem.IsChecked);
+        // Keeps the menu open so the item can show the check's progress and result.
+        var updateItem = CreateMenuItem(UpdateCoordinator.IdleText);
+        updateItem.StaysOpenOnClick = true;
+        updateItem.SetBinding(WpfMenuItem.HeaderProperty, new Binding(nameof(UpdateCoordinator.MenuText)) { Source = _updates });
+        updateItem.Click += async (_, _) => await _updates.CheckNowAsync();
         var exitItem = CreateMenuItem("Exit");
         exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
@@ -63,6 +73,7 @@ internal sealed class TrayIconController : IDisposable
         _contextMenu.Items.Add(refreshItem);
         _contextMenu.Items.Add(CreateSeparator());
         _contextMenu.Items.Add(_startupItem);
+        _contextMenu.Items.Add(updateItem);
         _contextMenu.Items.Add(CreateSeparator());
         _contextMenu.Items.Add(exitItem);
 
@@ -71,13 +82,20 @@ internal sealed class TrayIconController : IDisposable
 
     public event EventHandler? ExitRequested;
 
-    public void ShowError(string message)
+    public void ShowError(string message) => ShowNotification(message, NativeMethods.NIIF_WARNING, clicked: null);
+
+    /// <summary>Shows an informational notification, optionally running <paramref name="clicked"/> when the user clicks it.</summary>
+    public void ShowInfo(string message, Action? clicked = null) =>
+        ShowNotification(message, NativeMethods.NIIF_INFO, clicked);
+
+    private void ShowNotification(string message, uint flags, Action? clicked)
     {
         if (_disposed) return;
+        _notificationClicked = clicked;
         var data = CreateData(NativeMethods.NIF_INFO | NativeMethods.NIF_GUID);
         data.InfoTitle = "MonitorCenter";
         data.Info = message.Length <= 255 ? message : message[..255];
-        data.InfoFlags = 2;
+        data.InfoFlags = flags;
         NativeMethods.ShellNotifyIcon(NativeMethods.NIM_MODIFY, ref data);
     }
 
@@ -133,6 +151,12 @@ internal sealed class TrayIconController : IDisposable
         {
             handled = true;
             ShowContextMenu();
+        }
+        else if (notification == NativeMethods.NIN_BALLOONUSERCLICK && _notificationClicked is { } clicked)
+        {
+            handled = true;
+            _notificationClicked = null;
+            clicked();
         }
         return IntPtr.Zero;
     }
