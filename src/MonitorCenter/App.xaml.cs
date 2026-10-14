@@ -14,6 +14,7 @@ public partial class App : System.Windows.Application
     private FlyoutWindow? _flyoutWindow;
     private TrayIconController? _trayIcon;
     private StartupRegistration? _startupRegistration;
+    private UpdateCoordinator? _updates;
     private int _isShuttingDown;
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -44,8 +45,16 @@ public partial class App : System.Windows.Application
                              System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ??
                              Path.Combine(AppContext.BaseDirectory, "MonitorCenter.exe");
         _startupRegistration = new StartupRegistration(executablePath);
-        _trayIcon = new TrayIconController(_flyoutWindow, _startupRegistration);
+        _updates = new UpdateCoordinator(new VelopackAppUpdater());
+        _updates.UpdateReady += OnUpdateReady;
+        _updates.RestartRequested += OnExitRequested;
+        _trayIcon = new TrayIconController(_flyoutWindow, _startupRegistration, _updates);
         _trayIcon.ExitRequested += OnExitRequested;
+
+        if (Program.UpdatedToVersion is { } updatedVersion)
+        {
+            _trayIcon.ShowInfo($"MonitorCenter was updated to version {updatedVersion}.");
+        }
 
         try
         {
@@ -70,10 +79,19 @@ public partial class App : System.Windows.Application
         }
 #endif
 
+        _updates.StartBackgroundChecks();
+
         if (!options.IsStartupLaunch)
         {
             await _flyoutWindow.ShowFlyoutAsync();
         }
+    }
+
+    private void OnUpdateReady(object? sender, string version)
+    {
+        _trayIcon?.ShowInfo(
+            $"MonitorCenter {version} is ready. Click here to restart and update.",
+            () => _ = _updates?.CheckNowAsync());
     }
 
     private void OnActivationRequested()
@@ -99,6 +117,14 @@ public partial class App : System.Windows.Application
             _trayIcon.ExitRequested -= OnExitRequested;
             _trayIcon.Dispose();
             _trayIcon = null;
+        }
+
+        if (_updates is not null)
+        {
+            _updates.UpdateReady -= OnUpdateReady;
+            _updates.RestartRequested -= OnExitRequested;
+            _updates.Dispose();
+            _updates = null;
         }
 
         _flyoutWindow?.Hide();
