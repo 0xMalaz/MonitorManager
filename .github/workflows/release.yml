@@ -54,15 +54,19 @@ jobs:
         shell: pwsh
         run: |
           $tag = "v$env:VERSION"
+          # Upload as a draft first so installed copies only see the release once every asset is in place.
+          # --merge lets a rerun resume a draft left behind by a failed run.
           dotnet vpk upload github --repoUrl $env:REPO_URL --token $env:GH_TOKEN --outputDir .artifacts/releases `
-            --publish --tag $tag --releaseName "MonitorCenter $env:VERSION"
+            --merge --tag $tag --releaseName "MonitorCenter $env:VERSION"
           if ($LASTEXITCODE -ne 0) { throw 'vpk upload failed.' }
 
           # A stable name so the README can link to releases/latest/download/MonitorCenter-Setup.exe.
           Copy-Item .artifacts/releases/0xMalaz.MonitorCenter-win-Setup.exe .artifacts/MonitorCenter-Setup.exe
-          gh release upload $tag .artifacts/MonitorCenter-Setup.exe
+          gh release upload $tag .artifacts/MonitorCenter-Setup.exe --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Uploading MonitorCenter-Setup.exe failed.' }
 
           $notes = gh api "repos/${{ github.repository }}/releases/generate-notes" -f tag_name=$tag --jq .body
           if ($LASTEXITCODE -eq 0 -and $notes) { gh release edit $tag --notes ($notes -join "`n") }
-          $global:LASTEXITCODE = 0
+
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing the release failed.' }
