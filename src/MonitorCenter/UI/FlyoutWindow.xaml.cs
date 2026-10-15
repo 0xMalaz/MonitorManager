@@ -6,7 +6,6 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using MonitorCenter.Interop;
-using MonitorCenter.Models;
 using WpfButton = System.Windows.Controls.Button;
 using WpfMenuItem = System.Windows.Controls.MenuItem;
 
@@ -23,7 +22,7 @@ public partial class FlyoutWindow : Window
     private IntPtr _displayStateNotification;
     private bool _sessionNotificationRegistered;
     private int? _displayState;
-    private bool _isDisplayMenuOpen;
+    private bool _isTileMenuOpen;
     private bool _allowClose;
     private bool _disposed;
 
@@ -33,15 +32,24 @@ public partial class FlyoutWindow : Window
         DataContext = viewModel;
         InitializeComponent();
         SourceInitialized += OnSourceInitialized;
-        Deactivated += (_, _) => { if (!_allowClose && !_isDisplayMenuOpen) Hide(); };
+        Deactivated += (_, _) => { if (!_allowClose && !_isTileMenuOpen) Hide(); };
         PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.Escape)
             {
-                Hide();
+                if (_viewModel.IsRenaming)
+                {
+                    _viewModel.CancelRenames();
+                    ResizeAndReposition();
+                }
+                else
+                {
+                    Hide();
+                }
                 e.Handled = true;
             }
         };
+        IsVisibleChanged += (_, _) => { if (!IsVisible) _viewModel.CancelRenames(); };
         Closing += OnClosing;
         ThemeManager.ThemeChanged += OnThemeChanged;
 
@@ -122,9 +130,9 @@ public partial class FlyoutWindow : Window
 
     private async void ProfileButton_OnClick(object sender, RoutedEventArgs e)
     {
-        if (sender is WpfButton { DataContext: BrightnessProfile profile })
+        if (sender is WpfButton { DataContext: ProfileTileViewModel { IsRenaming: false } tile })
         {
-            await _viewModel.ApplyProfileAsync(profile);
+            await _viewModel.ApplyProfileAsync(tile.Profile);
         }
     }
 
@@ -141,14 +149,50 @@ public partial class FlyoutWindow : Window
         }, DispatcherPriority.Input);
     }
 
-    private void DisplayMenuButton_OnClick(object sender, RoutedEventArgs e)
+    private async void ProfileSaveButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is WpfButton { DataContext: ProfileTileViewModel tile })
+        {
+            await _viewModel.SaveProfileNameAsync(tile);
+            ResizeAndReposition();
+        }
+    }
+
+    private async void DisplaySaveButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is WpfButton { DataContext: MonitorRowViewModel row })
+        {
+            await _viewModel.SaveDisplayNameAsync(row);
+            ResizeAndReposition();
+        }
+    }
+
+    private void TileMenuButton_OnClick(object sender, RoutedEventArgs e)
     {
         if (sender is WpfButton { ContextMenu: { } menu } button)
         {
-            _isDisplayMenuOpen = true;
+            _isTileMenuOpen = true;
             menu.PlacementTarget = button;
             menu.IsOpen = true;
             e.Handled = true;
+        }
+    }
+
+    private void RenameProfileMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is WpfMenuItem { CommandParameter: ProfileTileViewModel tile })
+        {
+            _viewModel.StartProfileRename(tile);
+            ResizeAndReposition();
+        }
+    }
+
+    private async void DeleteProfileMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is WpfMenuItem { CommandParameter: ProfileTileViewModel tile })
+        {
+            await _viewModel.DeleteProfileAsync(tile);
+            ResizeAndReposition();
         }
     }
 
@@ -156,23 +200,74 @@ public partial class FlyoutWindow : Window
     {
         if (sender is WpfMenuItem { CommandParameter: MonitorRowViewModel row })
         {
-            _viewModel.OpenRenameEditor(row);
+            _viewModel.StartDisplayRename(row);
             ResizeAndReposition();
+        }
+    }
+
+    private void TileContextMenu_OnClosed(object sender, RoutedEventArgs e)
+    {
+        _isTileMenuOpen = false;
+        if (!IsVisible)
+        {
+            return;
+        }
+
+        // Deactivation is ignored while the menu is open. If the menu closed because the user moved to
+        // another app, dismiss the flyout as that deactivation would have; otherwise take focus back.
+        if (IsForegroundInThisProcess())
+        {
+            Activate();
+        }
+        else
+        {
+            Hide();
+        }
+    }
+
+    private static bool IsForegroundInThisProcess()
+    {
+        var foreground = NativeMethods.GetForegroundWindow();
+        if (foreground == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        NativeMethods.GetWindowThreadProcessId(foreground, out var processId);
+        return processId == (uint)Environment.ProcessId;
+    }
+
+    private void RenameTextBox_OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.TextBox { IsVisible: true } textBox)
+        {
+            // Wait for the context menu to close and give focus back to the flyout.
             Dispatcher.BeginInvoke(() =>
             {
                 Activate();
-                RenameDisplayTextBox.Focus();
-                RenameDisplayTextBox.SelectAll();
+                textBox.Focus();
+                textBox.SelectAll();
             }, DispatcherPriority.Input);
         }
     }
 
-    private void DisplayContextMenu_OnClosed(object sender, RoutedEventArgs e)
+    private async void ProfileRenameTextBox_OnKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        _isDisplayMenuOpen = false;
-        if (IsVisible)
+        if (e.Key == Key.Enter && sender is FrameworkElement { DataContext: ProfileTileViewModel tile })
         {
-            Activate();
+            e.Handled = true;
+            await _viewModel.SaveProfileNameAsync(tile);
+            ResizeAndReposition();
+        }
+    }
+
+    private async void DisplayRenameTextBox_OnKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && sender is FrameworkElement { DataContext: MonitorRowViewModel row })
+        {
+            e.Handled = true;
+            await _viewModel.SaveDisplayNameAsync(row);
+            ResizeAndReposition();
         }
     }
 
@@ -195,28 +290,6 @@ public partial class FlyoutWindow : Window
     private void CancelProfileSaveButton_OnClick(object sender, RoutedEventArgs e)
     {
         _viewModel.CloseProfileEditor();
-        ResizeAndReposition();
-    }
-
-    private async void SaveDisplayNameButton_OnClick(object sender, RoutedEventArgs e)
-    {
-        await _viewModel.SaveDisplayNameAsync();
-        ResizeAndReposition();
-    }
-
-    private async void RenameDisplayTextBox_OnKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter && _viewModel.CanSaveDisplayName)
-        {
-            e.Handled = true;
-            await _viewModel.SaveDisplayNameAsync();
-            ResizeAndReposition();
-        }
-    }
-
-    private void CancelRenameButton_OnClick(object sender, RoutedEventArgs e)
-    {
-        _viewModel.CloseRenameEditor();
         ResizeAndReposition();
     }
 

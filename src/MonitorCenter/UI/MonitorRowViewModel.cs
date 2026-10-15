@@ -17,6 +17,8 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
     private string? _statusText;
     private bool _suppressWrite;
     private bool _isBeingDragged;
+    private bool _isRenaming;
+    private string _editName = string.Empty;
     private bool _disposed;
 
     public MonitorRowViewModel(
@@ -54,6 +56,39 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
         : "Unavailable"
         : null;
     public bool HasCompactStatus => !string.IsNullOrWhiteSpace(CompactStatusText);
+
+    public bool IsRenaming
+    {
+        get => _isRenaming;
+        set
+        {
+            if (_isRenaming == value)
+            {
+                return;
+            }
+
+            _isRenaming = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string EditName
+    {
+        get => _editName;
+        set
+        {
+            if (string.Equals(_editName, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _editName = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanSaveName));
+        }
+    }
+
+    public bool CanSaveName => !string.IsNullOrWhiteSpace(EditName);
 
     public bool IsBeingDragged
     {

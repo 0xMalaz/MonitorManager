@@ -163,6 +163,65 @@
             <Setter Property="FontSize" Value="11" />
         </Style>
 
+        <!-- The small square buttons at the right of a profile or display tile: options, and save while renaming. -->
+        <Style x:Key="TileMenuButtonStyle" TargetType="Button" BasedOn="{StaticResource FlyoutButtonStyle}">
+            <Setter Property="Width" Value="22" />
+            <Setter Property="Height" Value="22" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FontFamily" Value="Segoe UI Symbol" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Content" Value="&#x22EE;" />
+            <Setter Property="ToolTip" Value="Options" />
+            <Setter Property="AutomationProperties.Name" Value="Options" />
+        </Style>
+
+        <Style x:Key="TileSaveButtonStyle" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
+            <Setter Property="Width" Value="22" />
+            <Setter Property="Height" Value="22" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <Path Width="10" Height="10" Stretch="Uniform" Data="M 1,5.5 L 4,8.5 L 9,1.5"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                              StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="ToolTip" Value="Save name" />
+            <Setter Property="AutomationProperties.Name" Value="Save name" />
+            <Setter Property="Visibility" Value="Collapsed" />
+        </Style>
+
+        <!-- Edits a name in place: no box or background, only the caret and an accent underline. -->
+        <Style x:Key="InlineRenameTextBoxStyle" TargetType="TextBox">
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryForegroundBrush}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="MaxLength" Value="40" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <!-- Shown by the tile's IsRenaming trigger, which a local value would override. -->
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Setter Property="CaretBrush" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="SelectionBrush" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="TextBox">
             <Setter Property="Foreground" Value="{DynamicResource PrimaryForegroundBrush}" />
             <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}" />
