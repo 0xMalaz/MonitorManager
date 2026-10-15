@@ -196,6 +196,12 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetForegroundWindow(IntPtr window);
 
+    [DllImport("user32.dll")]
+    internal static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    internal static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern IntPtr RegisterDeviceNotification(
         IntPtr recipient,

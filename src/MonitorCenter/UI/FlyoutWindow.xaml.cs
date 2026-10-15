@@ -208,10 +208,33 @@ public partial class FlyoutWindow : Window
     private void TileContextMenu_OnClosed(object sender, RoutedEventArgs e)
     {
         _isTileMenuOpen = false;
-        if (IsVisible)
+        if (!IsVisible)
+        {
+            return;
+        }
+
+        // Deactivation is ignored while the menu is open. If the menu closed because the user moved to
+        // another app, dismiss the flyout as that deactivation would have; otherwise take focus back.
+        if (IsForegroundInThisProcess())
         {
             Activate();
         }
+        else
+        {
+            Hide();
+        }
+    }
+
+    private static bool IsForegroundInThisProcess()
+    {
+        var foreground = NativeMethods.GetForegroundWindow();
+        if (foreground == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        NativeMethods.GetWindowThreadProcessId(foreground, out var processId);
+        return processId == (uint)Environment.ProcessId;
     }
 
     private void RenameTextBox_OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)

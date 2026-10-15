@@ -39,7 +39,8 @@ public sealed class FlyoutWindowTests
                     coordinator.Profiles.Add(new BrightnessProfile { Name = name });
                 }
 
-                var window = new FlyoutWindow(new FlyoutViewModel(coordinator));
+                var viewModel = new FlyoutViewModel(coordinator);
+                var window = new FlyoutWindow(viewModel);
 
                 Assert.IsFalse(window.ShowInTaskbar);
                 Assert.AreEqual(ResizeMode.NoResize, window.ResizeMode);
@@ -56,6 +57,46 @@ public sealed class FlyoutWindowTests
                 Assert.IsNotNull(monitorApplication.TryFindResource("InlineRenameTextBoxStyle") as Style);
                 Assert.IsNotNull(monitorApplication.TryFindResource("DisplayMenuItemStyle") as Style);
                 Assert.IsNull(monitorApplication.TryFindResource("StatusBannerStyle"));
+
+                // Renaming swaps the name for an inline text box and the options button for a save button.
+                var root = (FrameworkElement)window.Content;
+                window.Content = null;
+                root.DataContext = viewModel;
+                void Layout()
+                {
+                    root.Measure(new Size(354, double.PositiveInfinity));
+                    root.Arrange(new Rect(root.DesiredSize));
+                    root.UpdateLayout();
+                }
+
+                Layout();
+                var tile = viewModel.ProfileTiles[1];
+                var container = (FrameworkElement)trayProfiles.ItemContainerGenerator.ContainerFromItem(tile);
+                var presenter = (ContentPresenter)container;
+                var template = presenter.ContentTemplate;
+                var textBox = (TextBox)template.FindName("ProfileRenameTextBox", presenter);
+                var menuButton = (Button)template.FindName("ProfileMenuButton", presenter);
+                var saveButton = (Button)template.FindName("ProfileSaveButton", presenter);
+                Assert.AreEqual(Visibility.Collapsed, textBox.Visibility);
+                Assert.AreEqual(Visibility.Visible, menuButton.Visibility);
+                Assert.AreEqual(Visibility.Collapsed, saveButton.Visibility);
+
+                viewModel.StartProfileRename(tile);
+                Layout();
+                Assert.AreEqual(Visibility.Visible, textBox.Visibility);
+                Assert.AreEqual("Second", textBox.Text);
+                Assert.IsTrue(textBox.ActualWidth > 0);
+                Assert.AreEqual(Visibility.Collapsed, menuButton.Visibility);
+                Assert.AreEqual(Visibility.Visible, saveButton.Visibility);
+
+                textBox.Text = " ";
+                Assert.IsFalse(saveButton.IsEnabled);
+
+                viewModel.CancelRenames();
+                Layout();
+                Assert.AreEqual(Visibility.Collapsed, textBox.Visibility);
+                Assert.AreEqual(Visibility.Visible, menuButton.Visibility);
+                window.Content = root;
 
                 window.AllowCloseAndClose();
             }
