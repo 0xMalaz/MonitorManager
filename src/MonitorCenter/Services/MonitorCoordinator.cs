@@ -302,6 +302,84 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         }
     }
 
+    public async Task RenameProfileAsync(
+        BrightnessProfile profile,
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new InvalidOperationException("Enter a profile name.");
+        }
+
+        var normalizedName = AppSettingsStore.NormalizeName(name);
+        await _profileGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var error = await _dispatcher.InvokeAsync(() =>
+            {
+                if (!Profiles.Contains(profile))
+                {
+                    return "That profile no longer exists.";
+                }
+
+                if (Profiles.Any(other => !ReferenceEquals(other, profile) &&
+                        string.Equals(other.Name, normalizedName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return "A profile with that name already exists.";
+                }
+
+                profile.Name = normalizedName;
+                NotifyProfileCollectionsChanged();
+                return null;
+            });
+            if (error is not null)
+            {
+                throw new InvalidOperationException(error);
+            }
+
+            await SaveSettingsAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _profileGate.Release();
+        }
+    }
+
+    public async Task DeleteProfileAsync(
+        BrightnessProfile profile,
+        CancellationToken cancellationToken = default)
+    {
+        await _profileGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var removed = await _dispatcher.InvokeAsync(() =>
+            {
+                if (!Profiles.Remove(profile))
+                {
+                    return false;
+                }
+
+                if (_activeProfileId == profile.Id)
+                {
+                    _activeProfileId = null;
+                    OnPropertyChanged(nameof(ActiveProfileId));
+                }
+
+                NotifyProfileCollectionsChanged();
+                return true;
+            });
+            if (removed)
+            {
+                await SaveSettingsAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _profileGate.Release();
+        }
+    }
+
     public async Task RenameDisplayAsync(
         MonitorRowViewModel row,
         string name,

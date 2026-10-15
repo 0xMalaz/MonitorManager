@@ -51,8 +51,9 @@ public sealed class FlyoutWindowTests
                 Assert.IsNotNull(window.FindName("NewProfileButton") as Button);
                 Assert.IsNotNull(window.FindName("NewProfilePanel") as Border);
                 Assert.IsNotNull(window.FindName("ProfileNameTextBox") as TextBox);
-                Assert.IsNotNull(window.FindName("RenameDisplayPanel") as Border);
-                Assert.IsNotNull(window.FindName("RenameDisplayTextBox") as TextBox);
+                Assert.IsNull(window.FindName("RenameDisplayPanel"));
+                Assert.IsNotNull(monitorApplication.TryFindResource("TileMenuButtonStyle") as Style);
+                Assert.IsNotNull(monitorApplication.TryFindResource("InlineRenameTextBoxStyle") as Style);
                 Assert.IsNotNull(monitorApplication.TryFindResource("DisplayMenuItemStyle") as Style);
                 Assert.IsNull(monitorApplication.TryFindResource("StatusBannerStyle"));
 
