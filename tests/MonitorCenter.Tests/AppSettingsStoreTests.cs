@@ -224,6 +224,20 @@ public sealed class AppSettingsStoreTests
             await Assert.ThrowsExactlyAsync<IOException>(() => reloaded.SaveAsync(new AppSettings()));
             await Assert.ThrowsExactlyAsync<IOException>(() => reloaded.SaveAsync(new AppSettings()));
             CollectionAssert.AreEqual(backup, await File.ReadAllBytesAsync(store.BackupPath));
+
+            // After a restart, with the backup no longer locked, the settings it holds come back and stay.
+            var restarted = new AppSettingsStore(file);
+            var recovered = await restarted.LoadAsync();
+            CollectionAssert.AreEqual(new[] { "Work" }, recovered.Profiles.Select(profile => profile.Name).ToArray());
+            await restarted.SaveAsync(recovered);
+            recovered.Profiles.Add(CreateProfile("Evening", 10));
+            await restarted.SaveAsync(recovered);
+            CollectionAssert.AreEqual(
+                new[] { "Work", "Evening" },
+                (await new AppSettingsStore(file).LoadAsync()).Profiles.Select(profile => profile.Name).ToArray());
+            CollectionAssert.AreEqual(
+                new[] { "Work" },
+                (await ReadBackupAsync(store.BackupPath)).Profiles.Select(profile => profile.Name).ToArray());
         }
         finally
         {
@@ -279,6 +293,22 @@ public sealed class AppSettingsStoreTests
         finally
         {
             if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static async Task<AppSettings> ReadBackupAsync(string backupPath)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "MonitorCenter.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var copy = Path.Combine(directory, "settings.json");
+            File.Copy(backupPath, copy);
+            return await new AppSettingsStore(copy).LoadAsync();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
         }
     }
 

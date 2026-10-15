@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -35,6 +36,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         _dispatcher = dispatcher;
         _settingsStore = settingsStore ?? new AppSettingsStore();
         _recovery = new DisplayRecoveryScheduler(RecheckUnavailableAsync);
+        Monitors.CollectionChanged += OnMonitorsCollectionChanged;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -240,9 +242,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
                 removed.Add(row);
             }
 
-            var newRow = new MonitorRowViewModel(named, _monitorService, _dispatcher, WriteBrightnessAsync);
-            newRow.UserAdjusted += (_, _) => MarkCustom();
-            desired.Add(newRow);
+            desired.Add(new MonitorRowViewModel(named, _monitorService, _dispatcher, WriteBrightnessAsync));
         }
 
         removed.AddRange(existing.Values);
@@ -454,7 +454,11 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
                 matched++;
                 try
                 {
-                    await row.SetBrightnessAsync(brightness, cancellationToken).ConfigureAwait(false);
+                    // Null means newer input on the tile replaced the profile's value before it was written.
+                    if (await row.SetBrightnessAsync(brightness, cancellationToken).ConfigureAwait(false) is null)
+                    {
+                        hasFailures = true;
+                    }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -509,17 +513,19 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         }).ToList());
     }
 
-    private async Task ApplyActiveProfileToRowsAsync(
+    /// <summary>Sets displays that just became controllable to the active profile's brightness, if one is active.</summary>
+    internal async Task ApplyActiveProfileToRowsAsync(
         IReadOnlyList<MonitorRowViewModel> rows,
         CancellationToken cancellationToken)
     {
-        if (rows.Count == 0 || _activeProfileId is null)
+        if (rows.Count == 0)
         {
             return;
         }
 
         // Taken so a profile the user applies meanwhile can't interleave with this one. The active profile is read
-        // after it is taken, so this follows whichever profile was applied last.
+        // only after it is taken, so this follows a profile that was still being applied when the displays
+        // reconnected.
         await _profileGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -580,6 +586,26 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
             .ConfigureAwait(false);
         return result.ActualPercent;
     }
+
+    private void OnMonitorsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.Action == NotifyCollectionChangedAction.Move)
+        {
+            return;
+        }
+
+        foreach (MonitorRowViewModel row in e.OldItems ?? Array.Empty<MonitorRowViewModel>())
+        {
+            row.UserAdjusted -= OnRowUserAdjusted;
+        }
+
+        foreach (MonitorRowViewModel row in e.NewItems ?? Array.Empty<MonitorRowViewModel>())
+        {
+            row.UserAdjusted += OnRowUserAdjusted;
+        }
+    }
+
+    private void OnRowUserAdjusted(object? sender, EventArgs e) => MarkCustom();
 
     /// <summary>Called on the dispatcher when the user changes a display by hand.</summary>
     private void MarkCustom()

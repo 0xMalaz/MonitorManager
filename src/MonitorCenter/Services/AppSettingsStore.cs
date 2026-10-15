@@ -43,7 +43,8 @@ internal sealed class AppSettingsStore
     /// save is loaded instead. A file that can't be read, for example because another program has it locked, is
     /// retried; if it still can't be read, the backup is loaded and saving is turned off for this session so the
     /// file isn't overwritten. Saving is turned off as well when the backup is needed but can't be read, so the
-    /// backup isn't overwritten either.
+    /// backup isn't overwritten either. A missing file with a backup beside it, as an unparseable file leaves
+    /// behind, loads the backup.
     /// </summary>
     public async Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default)
     {
@@ -52,7 +53,10 @@ internal sealed class AppSettingsStore
         {
             try
             {
-                return await ReadWithRetriesAsync(_filePath, cancellationToken).ConfigureAwait(false) ?? new AppSettings();
+                if (await ReadWithRetriesAsync(_filePath, cancellationToken).ConfigureAwait(false) is { } settings)
+                {
+                    return settings;
+                }
             }
             catch (JsonException)
             {

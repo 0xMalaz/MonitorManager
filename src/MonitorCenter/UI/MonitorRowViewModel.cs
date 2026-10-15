@@ -171,6 +171,20 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
         }
     }
 
+    /// <summary>
+    /// Confirms the value the user chose on the tile. Counts as a change by the user even when the value is the one
+    /// already shown, because it replaces any value still being written, such as a profile's.
+    /// </summary>
+    public Task CommitAsync(CancellationToken cancellationToken = default)
+    {
+        if (IsControllable && !_disposed)
+        {
+            UserAdjusted?.Invoke(this, EventArgs.Empty);
+        }
+
+        return FlushAsync(cancellationToken);
+    }
+
     public async Task FlushAsync(CancellationToken cancellationToken = default)
     {
         if (!IsControllable || _writeCoordinator is null || _disposed)
