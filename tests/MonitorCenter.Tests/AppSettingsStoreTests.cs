@@ -202,6 +202,36 @@ public sealed class AppSettingsStoreTests
     }
 
     [TestMethod]
+    public async Task Load_CorruptJsonWithLockedBackupTurnsOffSavingSoTheBackupIsNotOverwritten()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "MonitorCenter.Tests", Guid.NewGuid().ToString("N"));
+        var file = Path.Combine(directory, "settings.json");
+        try
+        {
+            var store = new AppSettingsStore(file);
+            await store.SaveAsync(new AppSettings { Profiles = [CreateProfile("Work", 60)] });
+            await store.SaveAsync(new AppSettings { Profiles = [CreateProfile("Home", 30)] });
+            var backup = await File.ReadAllBytesAsync(store.BackupPath);
+            await File.WriteAllTextAsync(file, "{not-json");
+            var reloaded = new AppSettingsStore(file);
+
+            using (new FileStream(store.BackupPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                var loaded = await reloaded.LoadAsync();
+                Assert.AreEqual(0, loaded.Profiles.Count);
+            }
+
+            await Assert.ThrowsExactlyAsync<IOException>(() => reloaded.SaveAsync(new AppSettings()));
+            await Assert.ThrowsExactlyAsync<IOException>(() => reloaded.SaveAsync(new AppSettings()));
+            CollectionAssert.AreEqual(backup, await File.ReadAllBytesAsync(store.BackupPath));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task Load_SkipsNullEntries()
     {
         var directory = Path.Combine(Path.GetTempPath(), "MonitorCenter.Tests", Guid.NewGuid().ToString("N"));

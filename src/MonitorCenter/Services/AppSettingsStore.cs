@@ -42,43 +42,54 @@ internal sealed class AppSettingsStore
     /// Loads the settings. A file that can't be parsed is kept under another name and the backup from the previous
     /// save is loaded instead. A file that can't be read, for example because another program has it locked, is
     /// retried; if it still can't be read, the backup is loaded and saving is turned off for this session so the
-    /// file isn't overwritten.
+    /// file isn't overwritten. Saving is turned off as well when the backup is needed but can't be read, so the
+    /// backup isn't overwritten either.
     /// </summary>
     public async Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            for (var attempt = 0; ; attempt++)
+            try
             {
-                try
-                {
-                    return await ReadAsync(_filePath, cancellationToken).ConfigureAwait(false) ?? new AppSettings();
-                }
-                catch (JsonException)
-                {
-                    if (!TryPreserveUnreadableFile())
-                    {
-                        _savingBlocked = true;
-                    }
-
-                    return await ReadBackupAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    if (attempt == ReadRetryDelays.Length)
-                    {
-                        _savingBlocked = true;
-                        return await ReadBackupAsync(cancellationToken).ConfigureAwait(false);
-                    }
-                }
-
-                await Task.Delay(ReadRetryDelays[attempt], cancellationToken).ConfigureAwait(false);
+                return await ReadWithRetriesAsync(_filePath, cancellationToken).ConfigureAwait(false) ?? new AppSettings();
             }
+            catch (JsonException)
+            {
+                if (!TryPreserveUnreadableFile())
+                {
+                    _savingBlocked = true;
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                _savingBlocked = true;
+            }
+
+            return await ReadBackupAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _gate.Release();
+        }
+    }
+
+    /// <summary>Reads a settings file, retrying when it can't be opened, for example because it is locked.</summary>
+    /// <returns>The normalized settings, or null when the file doesn't exist.</returns>
+    private static async Task<AppSettings?> ReadWithRetriesAsync(string path, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await ReadAsync(path, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException && attempt < ReadRetryDelays.Length)
+            {
+            }
+
+            await Task.Delay(ReadRetryDelays[attempt], cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -102,10 +113,15 @@ internal sealed class AppSettingsStore
     {
         try
         {
-            return await ReadAsync(BackupPath, cancellationToken).ConfigureAwait(false) ?? new AppSettings();
+            return await ReadWithRetriesAsync(BackupPath, cancellationToken).ConfigureAwait(false) ?? new AppSettings();
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        catch (JsonException)
         {
+            return new AppSettings();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _savingBlocked = true;
             return new AppSettings();
         }
     }

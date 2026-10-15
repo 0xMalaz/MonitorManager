@@ -431,11 +431,16 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         BrightnessProfile profile,
         CancellationToken cancellationToken = default)
     {
+        if (_disposed)
+        {
+            return false;
+        }
+
         await _profileGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var adjustmentsBefore = Volatile.Read(ref _userAdjustments);
-            var rows = await _dispatcher.InvokeAsync(() => Monitors.ToArray());
+            // Read on the dispatcher, where MarkCustom counts the adjustments.
+            var (rows, adjustmentsBefore) = await _dispatcher.InvokeAsync(() => (Monitors.ToArray(), _userAdjustments));
             var hasFailures = false;
             var matched = 0;
             foreach (var setting in profile.MonitorSettings)
@@ -462,13 +467,15 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
             }
 
             // A display the user adjusted while the profile was applied means the setup is no longer the profile.
-            var applied = matched > 0 && !hasFailures && Volatile.Read(ref _userAdjustments) == adjustmentsBefore;
-            await _dispatcher.InvokeAsync(() =>
+            // This is checked on the dispatcher, in the same step that marks the profile active, so an adjustment
+            // can't land in between.
+            return await _dispatcher.InvokeAsync(() =>
             {
+                var applied = matched > 0 && !hasFailures && _userAdjustments == adjustmentsBefore;
                 _activeProfileId = applied ? profile.Id : null;
                 OnPropertyChanged(nameof(ActiveProfileId));
+                return applied;
             });
-            return applied;
         }
         finally
         {
@@ -506,18 +513,34 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         IReadOnlyList<MonitorRowViewModel> rows,
         CancellationToken cancellationToken)
     {
-        if (_activeProfileId is not Guid activeProfileId)
+        if (rows.Count == 0 || _activeProfileId is null)
         {
             return;
         }
 
-        var profile = await _dispatcher.InvokeAsync(() =>
-            Profiles.FirstOrDefault(item => item.Id == activeProfileId));
-        if (profile is null)
+        // Taken so a profile the user applies meanwhile can't interleave with this one. The active profile is read
+        // after it is taken, so this follows whichever profile was applied last.
+        await _profileGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            return;
+            var profile = await _dispatcher.InvokeAsync(() =>
+                Profiles.FirstOrDefault(item => item.Id == _activeProfileId));
+            if (profile is not null)
+            {
+                await ApplyProfileToRowsAsync(profile, rows, cancellationToken).ConfigureAwait(false);
+            }
         }
+        finally
+        {
+            _profileGate.Release();
+        }
+    }
 
+    private static async Task ApplyProfileToRowsAsync(
+        BrightnessProfile profile,
+        IReadOnlyList<MonitorRowViewModel> rows,
+        CancellationToken cancellationToken)
+    {
         foreach (var row in rows)
         {
             var setting = MatchProfileSetting(profile, row.Snapshot);
@@ -561,7 +584,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
     /// <summary>Called on the dispatcher when the user changes a display by hand.</summary>
     private void MarkCustom()
     {
-        Interlocked.Increment(ref _userAdjustments);
+        _userAdjustments++;
         _activeProfileId = null;
         OnPropertyChanged(nameof(ActiveProfileId));
     }
@@ -640,8 +663,10 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         _disposed = true;
         _recovery.Dispose();
 
-        // Let a refresh or recheck that is already running finish before its gate goes away.
+        // Let a refresh, recheck or profile operation that is already running finish before its gate and the rows
+        // it writes to go away.
         await _refreshGate.WaitAsync();
+        await _profileGate.WaitAsync();
         foreach (var row in Monitors.ToArray())
         {
             await row.DisposeAsync();

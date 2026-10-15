@@ -98,6 +98,44 @@ public sealed class ProfileEditingTests
             viewModel.ProfileTiles.Select(item => item.Name).ToArray());
     });
 
+    [TestMethod]
+    public void Dispose_WaitsForAProfileBeingApplied() => RunWithCoordinator(async (coordinator, _) =>
+    {
+        var writeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var monitorService = new MonitorService();
+        var row = new MonitorRowViewModel(
+            new MonitorSnapshot(
+                "monitor-1", "Monitor", "Monitor", null, @"\\.\DISPLAY1", new DesktopBounds(0, 0, 1920, 1080),
+                0, 100, 50, BrightnessBackendKind.DdcHighLevel, MonitorSupportStatus.Ready, null),
+            monitorService,
+            Dispatcher.CurrentDispatcher,
+            async (_, value, _, _) =>
+            {
+                writeStarted.TrySetResult();
+                await releaseWrite.Task;
+                return value;
+            });
+        coordinator.Monitors.Add(row);
+        var profile = new BrightnessProfile
+        {
+            Name = "Work",
+            MonitorSettings = [new ProfileMonitorSetting { Identity = new MonitorIdentity { Id = "monitor-1" }, Brightness = 30 }]
+        };
+        coordinator.Profiles.Add(profile);
+
+        var apply = coordinator.ApplyProfileAsync(profile);
+        await writeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var dispose = coordinator.DisposeAsync().AsTask();
+        await Task.Delay(50);
+        Assert.IsFalse(dispose.IsCompleted, "Disposal didn't wait for the profile being applied.");
+
+        releaseWrite.SetResult();
+        Assert.IsTrue(await apply);
+        await dispose.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.IsFalse(await coordinator.ApplyProfileAsync(profile));
+    });
+
     private static void RunWithCoordinator(Func<MonitorCoordinator, AppSettingsStore, Task> body)
     {
         var directory = Path.Combine(Path.GetTempPath(), "MonitorCenterTests", Guid.NewGuid().ToString("N"));
