@@ -21,7 +21,7 @@ public sealed class BrightnessWriteCoordinatorTests
                 return Task.FromResult(value);
             },
             TimeSpan.FromMilliseconds(25));
-        coordinator.Applied += value =>
+        coordinator.Applied += (value, _) =>
         {
             if (value == 30)
             {
@@ -57,7 +57,7 @@ public sealed class BrightnessWriteCoordinatorTests
                 return Task.FromResult(value);
             },
             TimeSpan.FromMilliseconds(25));
-        coordinator.Applied += value =>
+        coordinator.Applied += (value, _) =>
         {
             if (value == 40)
             {
@@ -78,5 +78,44 @@ public sealed class BrightnessWriteCoordinatorTests
                 (40, BrightnessWriteMode.Commit)
             },
             writes.ToArray());
+    }
+
+    [TestMethod]
+    public async Task Flush_SkipsRequestsReplacedWhileWaitingAndMarksLateResultsStale()
+    {
+        var writes = new ConcurrentQueue<int>();
+        var firstWriteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var applied = new ConcurrentQueue<(int Value, bool WasLatest)>();
+        BrightnessWriteCoordinator? coordinator = null;
+
+        await using (coordinator = new BrightnessWriteCoordinator(
+            async (value, _, _) =>
+            {
+                writes.Enqueue(value);
+                if (value == 51)
+                {
+                    firstWriteStarted.TrySetResult();
+                    await releaseFirstWrite.Task;
+                }
+
+                return value;
+            }))
+        {
+            coordinator.Applied += (value, version) => applied.Enqueue((value, coordinator.IsLatest(version)));
+
+            var first = coordinator.FlushAsync(51);
+            await firstWriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            var second = coordinator.FlushAsync(52);
+            var third = coordinator.FlushAsync(53);
+            releaseFirstWrite.SetResult();
+
+            Assert.AreEqual(51, await first);
+            Assert.IsNull(await second);
+            Assert.AreEqual(53, await third);
+        }
+
+        CollectionAssert.AreEqual(new[] { 51, 53 }, writes.ToArray());
+        CollectionAssert.AreEqual(new[] { (51, false), (53, true) }, applied.ToArray());
     }
 }

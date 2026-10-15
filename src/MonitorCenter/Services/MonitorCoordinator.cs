@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows.Threading;
 using MonitorCenter.Models;
@@ -22,6 +23,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
     private bool _disposed;
     private string _emptyMessage = "No displays detected.";
     private Guid? _activeProfileId;
+    private int _userAdjustments;
     private AppSettings _settings = new();
 
     public MonitorCoordinator(
@@ -93,7 +95,15 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         });
 
         await RefreshAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-        await SaveSettingsAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await SaveSettingsAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // This save only writes the loaded settings back normalized; changes the user makes later report
+            // their own save failures.
+        }
     }
 
     public async Task RefreshAsync(bool reprobeKnownDisplays = true, CancellationToken cancellationToken = default)
@@ -230,7 +240,9 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
                 removed.Add(row);
             }
 
-            desired.Add(new MonitorRowViewModel(named, _monitorService, _dispatcher, WriteBrightnessAsync));
+            var newRow = new MonitorRowViewModel(named, _monitorService, _dispatcher, WriteBrightnessAsync);
+            newRow.UserAdjusted += (_, _) => MarkCustom();
+            desired.Add(newRow);
         }
 
         removed.AddRange(existing.Values);
@@ -409,44 +421,59 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         await SaveSettingsAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Sets every connected display in the profile to its saved brightness. Profiles are applied one at a time, and
+    /// each display's value goes through its tile's write queue, so a quick second click or a tile write still in
+    /// flight can't leave displays from two different setups.
+    /// </summary>
+    /// <returns>True when every display in the profile that is connected was set.</returns>
     public async Task<bool> ApplyProfileAsync(
         BrightnessProfile profile,
         CancellationToken cancellationToken = default)
     {
-        var rows = await _dispatcher.InvokeAsync(() => Monitors.ToArray());
-        var hasFailures = false;
-        var matched = 0;
-        foreach (var setting in profile.MonitorSettings)
+        await _profileGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            var row = MatchMonitor(rows, setting.Identity);
-            if (row is null || setting.Brightness is not int brightness)
+            var adjustmentsBefore = Volatile.Read(ref _userAdjustments);
+            var rows = await _dispatcher.InvokeAsync(() => Monitors.ToArray());
+            var hasFailures = false;
+            var matched = 0;
+            foreach (var setting in profile.MonitorSettings)
             {
-                continue;
+                var row = MatchMonitor(rows, setting.Identity);
+                if (row is null || setting.Brightness is not int brightness)
+                {
+                    continue;
+                }
+
+                matched++;
+                try
+                {
+                    await row.SetBrightnessAsync(brightness, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception)
+                {
+                    hasFailures = true;
+                }
             }
 
-            matched++;
-            try
+            // A display the user adjusted while the profile was applied means the setup is no longer the profile.
+            var applied = matched > 0 && !hasFailures && Volatile.Read(ref _userAdjustments) == adjustmentsBefore;
+            await _dispatcher.InvokeAsync(() =>
             {
-                var result = await _monitorService.SetBrightnessAsync(
-                    row.Snapshot.Id,
-                    brightness,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
-                row.ApplyExternalBrightness(result.ActualPercent);
-            }
-            catch (Exception)
-            {
-                hasFailures = true;
-            }
+                _activeProfileId = applied ? profile.Id : null;
+                OnPropertyChanged(nameof(ActiveProfileId));
+            });
+            return applied;
         }
-
-        if (matched == 0)
+        finally
         {
-            hasFailures = true;
+            _profileGate.Release();
         }
-
-        _activeProfileId = hasFailures ? null : profile.Id;
-        await _dispatcher.InvokeAsync(() => OnPropertyChanged(nameof(ActiveProfileId)));
-        return !hasFailures;
     }
 
     private async Task<List<ProfileMonitorSetting>> CaptureCurrentSetupAsync(
@@ -501,11 +528,11 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
 
             try
             {
-                var result = await _monitorService.SetBrightnessAsync(
-                    row.Snapshot.Id,
-                    brightness,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
-                row.ApplyExternalBrightness(result.ActualPercent);
+                await row.SetBrightnessAsync(brightness, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception)
             {
@@ -526,16 +553,17 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         BrightnessWriteMode mode,
         CancellationToken cancellationToken)
     {
-        MarkCustom();
         var result = await _monitorService.SetBrightnessAsync(source.Snapshot.Id, requested, mode, cancellationToken)
             .ConfigureAwait(false);
         return result.ActualPercent;
     }
 
+    /// <summary>Called on the dispatcher when the user changes a display by hand.</summary>
     private void MarkCustom()
     {
+        Interlocked.Increment(ref _userAdjustments);
         _activeProfileId = null;
-        _dispatcher.BeginInvoke(() => OnPropertyChanged(nameof(ActiveProfileId)));
+        OnPropertyChanged(nameof(ActiveProfileId));
     }
 
     private static MonitorRowViewModel? MatchMonitor(

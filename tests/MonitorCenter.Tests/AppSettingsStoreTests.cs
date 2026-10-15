@@ -128,18 +128,101 @@ public sealed class AppSettingsStoreTests
     }
 
     [TestMethod]
-    public async Task Load_CorruptJsonReturnsDefaults()
+    public async Task Load_CorruptJsonWithoutBackupReturnsDefaultsAndKeepsTheFile()
     {
-        var file = Path.GetTempFileName();
+        var directory = Path.Combine(Path.GetTempPath(), "MonitorCenter.Tests", Guid.NewGuid().ToString("N"));
+        var file = Path.Combine(directory, "settings.json");
         try
         {
+            Directory.CreateDirectory(directory);
             await File.WriteAllTextAsync(file, "{not-json");
-            var loaded = await new AppSettingsStore(file).LoadAsync();
+            var store = new AppSettingsStore(file);
+            var loaded = await store.LoadAsync();
             Assert.AreEqual(AppSettings.CurrentSchemaVersion, loaded.SchemaVersion);
             Assert.AreEqual(0, loaded.Profiles.Count);
             Assert.AreEqual(0, loaded.DisplayNames.Count);
+
+            await store.SaveAsync(new AppSettings { Profiles = [CreateProfile("Work", 60)] });
+            var preserved = Directory.GetFiles(directory, "settings.unreadable-*.json").Single();
+            Assert.AreEqual("{not-json", await File.ReadAllTextAsync(preserved));
         }
-        finally { File.Delete(file); }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task Load_CorruptJsonFallsBackToTheBackupOfThePreviousSave()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "MonitorCenter.Tests", Guid.NewGuid().ToString("N"));
+        var file = Path.Combine(directory, "settings.json");
+        try
+        {
+            var store = new AppSettingsStore(file);
+            await store.SaveAsync(new AppSettings { Profiles = [CreateProfile("Work", 60)] });
+            await store.SaveAsync(new AppSettings { Profiles = [CreateProfile("Work", 60), CreateProfile("Home", 30)] });
+            Assert.IsTrue(File.Exists(store.BackupPath));
+            await File.WriteAllTextAsync(file, "{not-json");
+
+            var loaded = await new AppSettingsStore(file).LoadAsync();
+
+            CollectionAssert.AreEqual(new[] { "Work" }, loaded.Profiles.Select(profile => profile.Name).ToArray());
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task Load_LockedFileTurnsOffSavingSoTheFileIsNotOverwritten()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "MonitorCenter.Tests", Guid.NewGuid().ToString("N"));
+        var file = Path.Combine(directory, "settings.json");
+        try
+        {
+            await new AppSettingsStore(file).SaveAsync(new AppSettings { Profiles = [CreateProfile("Work", 60)] });
+            var original = await File.ReadAllBytesAsync(file);
+            var store = new AppSettingsStore(file);
+
+            using (new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                var loaded = await store.LoadAsync();
+                Assert.AreEqual(0, loaded.Profiles.Count);
+            }
+
+            await Assert.ThrowsExactlyAsync<IOException>(() => store.SaveAsync(new AppSettings()));
+            CollectionAssert.AreEqual(original, await File.ReadAllBytesAsync(file));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task Load_SkipsNullEntries()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "MonitorCenter.Tests", Guid.NewGuid().ToString("N"));
+        var file = Path.Combine(directory, "settings.json");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            await File.WriteAllTextAsync(
+                file,
+                """{ "Profiles": [null, { "Name": "Work", "MonitorSettings": [null] }], "DisplayNames": [null] }""");
+
+            var loaded = await new AppSettingsStore(file).LoadAsync();
+
+            Assert.AreEqual("Work", loaded.Profiles.Single().Name);
+            Assert.AreEqual(0, loaded.Profiles.Single().MonitorSettings.Count);
+            Assert.AreEqual(0, loaded.DisplayNames.Count);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
     }
 
     [TestMethod]

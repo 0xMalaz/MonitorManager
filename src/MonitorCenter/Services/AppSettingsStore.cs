@@ -12,8 +12,18 @@ internal sealed class AppSettingsStore
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly TimeSpan[] ReadRetryDelays =
+    [
+        TimeSpan.FromMilliseconds(100),
+        TimeSpan.FromMilliseconds(400)
+    ];
+
     private readonly string _filePath;
     private readonly SemaphoreSlim _gate = new(1, 1);
+
+    // Set when the settings file exists but couldn't be read, so saving would replace settings that were never
+    // loaded.
+    private bool _savingBlocked;
 
     public AppSettingsStore(string? filePath = null)
     {
@@ -25,30 +35,95 @@ internal sealed class AppSettingsStore
 
     internal string FilePath => _filePath;
 
+    /// <summary>The settings as they were before the last save.</summary>
+    internal string BackupPath => _filePath + ".bak";
+
+    /// <summary>
+    /// Loads the settings. A file that can't be parsed is kept under another name and the backup from the previous
+    /// save is loaded instead. A file that can't be read, for example because another program has it locked, is
+    /// retried; if it still can't be read, the backup is loaded and saving is turned off for this session so the
+    /// file isn't overwritten.
+    /// </summary>
     public async Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!File.Exists(_filePath))
+            for (var attempt = 0; ; attempt++)
             {
-                return new AppSettings();
-            }
+                try
+                {
+                    return await ReadAsync(_filePath, cancellationToken).ConfigureAwait(false) ?? new AppSettings();
+                }
+                catch (JsonException)
+                {
+                    if (!TryPreserveUnreadableFile())
+                    {
+                        _savingBlocked = true;
+                    }
 
-            await using var stream = File.OpenRead(_filePath);
-            var settings = await JsonSerializer.DeserializeAsync<AppSettings>(
-                stream,
-                SerializerOptions,
-                cancellationToken).ConfigureAwait(false);
-            return Normalize(settings ?? new AppSettings());
+                    return await ReadBackupAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    if (attempt == ReadRetryDelays.Length)
+                    {
+                        _savingBlocked = true;
+                        return await ReadBackupAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                }
+
+                await Task.Delay(ReadRetryDelays[attempt], cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <returns>The normalized settings, or null when the file doesn't exist.</returns>
+    private static async Task<AppSettings?> ReadAsync(string path, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        await using var stream = File.OpenRead(path);
+        var settings = await JsonSerializer.DeserializeAsync<AppSettings>(
+            stream,
+            SerializerOptions,
+            cancellationToken).ConfigureAwait(false);
+        return Normalize(settings ?? new AppSettings());
+    }
+
+    private async Task<AppSettings> ReadBackupAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ReadAsync(BackupPath, cancellationToken).ConfigureAwait(false) ?? new AppSettings();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
         {
             return new AppSettings();
         }
-        finally
+    }
+
+    /// <summary>Renames a settings file that can't be parsed, so the next save doesn't destroy it.</summary>
+    private bool TryPreserveUnreadableFile()
+    {
+        try
         {
-            _gate.Release();
+            var preservedPath = Path.Combine(
+                Path.GetDirectoryName(_filePath)!,
+                $"{Path.GetFileNameWithoutExtension(_filePath)}.unreadable-{DateTime.Now:yyyyMMdd-HHmmss}{Path.GetExtension(_filePath)}");
+            File.Move(_filePath, preservedPath, overwrite: true);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
         }
     }
 
@@ -57,6 +132,12 @@ internal sealed class AppSettingsStore
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (_savingBlocked)
+            {
+                throw new IOException(
+                    "MonitorCenter couldn't read its settings file, so it won't overwrite it. Restart MonitorCenter to save changes.");
+            }
+
             var normalized = Normalize(settings);
             var content = JsonSerializer.SerializeToUtf8Bytes(normalized, SerializerOptions);
             if (await IsUnchangedAsync(content, cancellationToken).ConfigureAwait(false))
@@ -78,6 +159,13 @@ internal sealed class AppSettingsStore
             {
                 await stream.WriteAsync(content, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            // The file being replaced was loaded or written by this app, so it becomes the backup that loading
+            // falls back to.
+            if (File.Exists(_filePath))
+            {
+                File.Copy(_filePath, BackupPath, overwrite: true);
             }
 
             File.Move(temporaryPath, _filePath, overwrite: true);
@@ -106,7 +194,10 @@ internal sealed class AppSettingsStore
         settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
         settings.Profiles ??= [];
         settings.DisplayNames ??= [];
-        settings.Profiles = settings.Profiles.Take(MonitorCoordinator.MaxProfileCount).ToList();
+        settings.Profiles = settings.Profiles
+            .Where(profile => profile is not null)
+            .Take(MonitorCoordinator.MaxProfileCount)
+            .ToList();
 
         var usedIds = new HashSet<Guid>();
         foreach (var profile in settings.Profiles)
@@ -118,7 +209,7 @@ internal sealed class AppSettingsStore
             }
 
             profile.Name = NormalizeName(profile.Name);
-            profile.MonitorSettings ??= [];
+            profile.MonitorSettings = profile.MonitorSettings?.Where(monitor => monitor is not null).ToList() ?? [];
             foreach (var monitor in profile.MonitorSettings)
             {
                 monitor.Identity ??= new MonitorIdentity();
@@ -130,7 +221,7 @@ internal sealed class AppSettingsStore
 
         var normalizedDisplayNames = new List<DisplayNamePreference>();
         var displayKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var preference in settings.DisplayNames)
+        foreach (var preference in settings.DisplayNames.Where(preference => preference is not null))
         {
             preference.Identity ??= new MonitorIdentity();
             preference.Name = NormalizeDisplayName(preference.Name);
