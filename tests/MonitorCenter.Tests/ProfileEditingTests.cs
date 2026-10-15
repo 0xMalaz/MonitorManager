@@ -98,6 +98,163 @@ public sealed class ProfileEditingTests
             viewModel.ProfileTiles.Select(item => item.Name).ToArray());
     });
 
+    [TestMethod]
+    public void Dispose_WaitsForAProfileBeingApplied() => RunWithCoordinator(async (coordinator, _) =>
+    {
+        var writeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var monitorService = new MonitorService();
+        var row = CreateRow("monitor-1", monitorService, async value =>
+        {
+            writeStarted.TrySetResult();
+            await releaseWrite.Task;
+            return value;
+        });
+        coordinator.Monitors.Add(row);
+        var profile = CreateProfile(("monitor-1", 30));
+        coordinator.Profiles.Add(profile);
+
+        var apply = coordinator.ApplyProfileAsync(profile);
+        await writeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var dispose = coordinator.DisposeAsync().AsTask();
+        await Task.Delay(50);
+        Assert.IsFalse(dispose.IsCompleted, "Disposal didn't wait for the profile being applied.");
+
+        releaseWrite.SetResult();
+        Assert.IsTrue(await apply);
+        await dispose.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.IsFalse(await coordinator.ApplyProfileAsync(profile));
+    });
+
+    [TestMethod]
+    public void ApplyProfile_IsNotActiveWhenTheUserCommitsWhileItsWriteRuns() => RunWithCoordinator(async (coordinator, _) =>
+    {
+        var profileWriteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseProfileWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var monitorService = new MonitorService();
+        var row = CreateRow("monitor-1", monitorService, async value =>
+        {
+            if (value == 30)
+            {
+                profileWriteStarted.TrySetResult();
+                await releaseProfileWrite.Task;
+            }
+
+            return value;
+        });
+        coordinator.Monitors.Add(row);
+        var profile = CreateProfile(("monitor-1", 30));
+        coordinator.Profiles.Add(profile);
+
+        var apply = coordinator.ApplyProfileAsync(profile);
+        await profileWriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // The tile still shows 50, so committing it changes no value but replaces the profile's.
+        var commit = row.CommitAsync();
+        releaseProfileWrite.SetResult();
+
+        Assert.IsFalse(await apply);
+        await commit;
+        Assert.IsNull(coordinator.ActiveProfileId);
+    });
+
+    [TestMethod]
+    public void ApplyProfile_IsNotActiveWhenATileCommitReplacesItsQueuedWrite() => RunWithCoordinator(async (coordinator, _) =>
+    {
+        var tileWriteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseTileWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writes = new List<int>();
+        await using var monitorService = new MonitorService();
+        var row = CreateRow("monitor-1", monitorService, async value =>
+        {
+            lock (writes)
+            {
+                writes.Add(value);
+            }
+
+            if (value == 50)
+            {
+                tileWriteStarted.TrySetResult();
+                await releaseTileWrite.Task;
+            }
+
+            return value;
+        });
+        coordinator.Monitors.Add(row);
+        var profile = CreateProfile(("monitor-1", 30));
+        coordinator.Profiles.Add(profile);
+
+        var firstCommit = row.CommitAsync();
+        await tileWriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var apply = coordinator.ApplyProfileAsync(profile);
+        await Task.Delay(50);
+        var secondCommit = row.CommitAsync();
+        releaseTileWrite.SetResult();
+
+        Assert.IsFalse(await apply);
+        await Task.WhenAll(firstCommit, secondCommit);
+        Assert.IsNull(coordinator.ActiveProfileId);
+        CollectionAssert.DoesNotContain(writes, 30);
+    });
+
+    [TestMethod]
+    public void ReconnectedDisplay_GetsAProfileThatWasStillBeingApplied() => RunWithCoordinator(async (coordinator, _) =>
+    {
+        var profileWriteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseProfileWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reconnectedWrites = new List<int>();
+        await using var monitorService = new MonitorService();
+        var connected = CreateRow("monitor-1", monitorService, async value =>
+        {
+            profileWriteStarted.TrySetResult();
+            await releaseProfileWrite.Task;
+            return value;
+        });
+        var reconnected = CreateRow("monitor-2", monitorService, value =>
+        {
+            lock (reconnectedWrites)
+            {
+                reconnectedWrites.Add(value);
+            }
+
+            return Task.FromResult(value);
+        });
+        coordinator.Monitors.Add(connected);
+        var profile = CreateProfile(("monitor-1", 30), ("monitor-2", 70));
+        coordinator.Profiles.Add(profile);
+
+        var apply = coordinator.ApplyProfileAsync(profile);
+        await profileWriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // The second display reconnects while no profile is active yet.
+        coordinator.Monitors.Add(reconnected);
+        var reconnect = coordinator.ApplyActiveProfileToRowsAsync([reconnected], CancellationToken.None);
+        releaseProfileWrite.SetResult();
+
+        Assert.IsTrue(await apply);
+        await reconnect;
+        CollectionAssert.AreEqual(new[] { 70 }, reconnectedWrites);
+        Assert.AreEqual(profile.Id, coordinator.ActiveProfileId);
+    });
+
+    private static MonitorRowViewModel CreateRow(string id, MonitorService monitorService, Func<int, Task<int>> write) => new(
+        new MonitorSnapshot(
+            id, id, id, null, @"\\.\DISPLAY1", new DesktopBounds(0, 0, 1920, 1080),
+            0, 100, 50, BrightnessBackendKind.DdcHighLevel, MonitorSupportStatus.Ready, null),
+        monitorService,
+        Dispatcher.CurrentDispatcher,
+        (_, value, _, _) => write(value));
+
+    private static BrightnessProfile CreateProfile(params (string Id, int Brightness)[] settings) => new()
+    {
+        Name = "Work",
+        MonitorSettings = settings
+            .Select(setting => new ProfileMonitorSetting
+            {
+                Identity = new MonitorIdentity { Id = setting.Id },
+                Brightness = setting.Brightness
+            })
+            .ToList()
+    };
+
     private static void RunWithCoordinator(Func<MonitorCoordinator, AppSettingsStore, Task> body)
     {
         var directory = Path.Combine(Path.GetTempPath(), "MonitorCenterTests", Guid.NewGuid().ToString("N"));

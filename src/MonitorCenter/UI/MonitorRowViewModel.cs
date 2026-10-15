@@ -45,6 +45,9 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    /// <summary>Raised when the user changes this display's brightness on its tile.</summary>
+    public event EventHandler? UserAdjusted;
+
     public MonitorSnapshot Snapshot { get; private set; }
     public int AppliedPercent => _appliedPercent;
     public string DisplayName => Snapshot.DisplayName;
@@ -142,6 +145,7 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
             {
                 StatusText = null;
                 _writeCoordinator!.Queue(bounded);
+                UserAdjusted?.Invoke(this, EventArgs.Empty);
             }
         }
     }
@@ -167,6 +171,20 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
         }
     }
 
+    /// <summary>
+    /// Confirms the value the user chose on the tile. Counts as a change by the user even when the value is the one
+    /// already shown, because it replaces any value still being written, such as a profile's.
+    /// </summary>
+    public Task CommitAsync(CancellationToken cancellationToken = default)
+    {
+        if (IsControllable && !_disposed)
+        {
+            UserAdjusted?.Invoke(this, EventArgs.Empty);
+        }
+
+        return FlushAsync(cancellationToken);
+    }
+
     public async Task FlushAsync(CancellationToken cancellationToken = default)
     {
         if (!IsControllable || _writeCoordinator is null || _disposed)
@@ -176,10 +194,7 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
 
         try
         {
-            var actual = await _writeCoordinator
-                .FlushAsync(CurrentPercent, cancellationToken)
-                .ConfigureAwait(false);
-            HandleApplied(actual);
+            await _writeCoordinator.FlushAsync(CurrentPercent, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -187,6 +202,30 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
         catch (Exception exception)
         {
             HandleFailed(exception);
+        }
+    }
+
+    /// <summary>
+    /// Sets a brightness chosen outside the tile, such as a profile's, through the same queue as the tile's own
+    /// writes, so it replaces any write still pending from the tile instead of racing it.
+    /// </summary>
+    /// <returns>The brightness the display reported, or null when newer input on the tile replaced it.</returns>
+    /// <remarks>A failure is shown on the tile as well as thrown.</remarks>
+    public async Task<int?> SetBrightnessAsync(int percent, CancellationToken cancellationToken = default)
+    {
+        if (!IsControllable || _writeCoordinator is null || _disposed)
+        {
+            throw new InvalidOperationException(StatusText ?? "This display can't be controlled.");
+        }
+
+        try
+        {
+            return await _writeCoordinator.FlushAsync(percent, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            HandleFailed(exception);
+            throw;
         }
     }
 
@@ -206,7 +245,7 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
         return result.ActualPercent;
     }
 
-    private void HandleApplied(int actualPercent)
+    private void HandleApplied(int actualPercent, long version)
     {
         _dispatcher.BeginInvoke(() =>
         {
@@ -215,25 +254,11 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
                 return;
             }
 
-            _suppressWrite = true;
-            try
-            {
-                CurrentPercent = actualPercent;
-                _appliedPercent = actualPercent;
-                StatusText = null;
-            }
-            finally
-            {
-                _suppressWrite = false;
-            }
-        });
-    }
+            _appliedPercent = Math.Clamp(actualPercent, 0, 100);
 
-    public void ApplyExternalBrightness(int actualPercent)
-    {
-        _dispatcher.BeginInvoke(() =>
-        {
-            if (_disposed)
+            // The user may have moved on since this write started; the tile keeps showing their newer value,
+            // which its own write will confirm.
+            if (!_writeCoordinator!.IsLatest(version))
             {
                 return;
             }
@@ -241,7 +266,6 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
             _suppressWrite = true;
             try
             {
-                _appliedPercent = Math.Clamp(actualPercent, 0, 100);
                 CurrentPercent = _appliedPercent;
                 StatusText = null;
             }

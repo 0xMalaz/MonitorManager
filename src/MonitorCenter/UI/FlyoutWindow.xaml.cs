@@ -124,7 +124,7 @@ public partial class FlyoutWindow : Window
     {
         if (sender is BrightnessBox { DataContext: MonitorRowViewModel row })
         {
-            await row.FlushAsync();
+            await row.CommitAsync();
         }
     }
 

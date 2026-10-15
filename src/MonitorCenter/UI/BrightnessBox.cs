@@ -1,4 +1,7 @@
 using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Input;
 using System.Windows.Media;
 using MediaBrush = System.Windows.Media.Brush;
@@ -32,7 +35,7 @@ public sealed class BrightnessBox : FrameworkElement
             0,
             FrameworkPropertyMetadataOptions.AffectsRender |
             FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
-            null,
+            OnValueChanged,
             CoerceValue));
 
     public static readonly DependencyProperty IsInteractionEnabledProperty = DependencyProperty.Register(
@@ -236,6 +239,28 @@ public sealed class BrightnessBox : FrameworkElement
         e.Handled = true;
     }
 
+    protected override AutomationPeer OnCreateAutomationPeer() => new BrightnessBoxAutomationPeer(this);
+
+    /// <summary>Sets the value the way a key press would, for assistive technology.</summary>
+    internal void SetValueFromAutomation(int value)
+    {
+        if (!IsEnabled || !IsInteractionEnabled)
+        {
+            throw new ElementNotEnabledException();
+        }
+
+        Value = Math.Clamp(value, 0, 100);
+        ValueCommitRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static void OnValueChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs e)
+    {
+        if (UIElementAutomationPeer.FromElement((BrightnessBox)dependencyObject) is BrightnessBoxAutomationPeer peer)
+        {
+            peer.RaiseValueChanged((int)e.OldValue, (int)e.NewValue);
+        }
+    }
+
     internal static int ValueFromY(double y, double height)
     {
         if (height <= 0 || double.IsNaN(height) || double.IsInfinity(height))
@@ -279,4 +304,34 @@ public sealed class BrightnessBox : FrameworkElement
             typeof(MediaBrush),
             typeof(BrightnessBox),
             new FrameworkPropertyMetadata(MediaBrushes.Transparent, FrameworkPropertyMetadataOptions.AffectsRender));
+}
+
+/// <summary>Exposes a <see cref="BrightnessBox"/> to screen readers as a 0–100 slider.</summary>
+internal sealed class BrightnessBoxAutomationPeer(BrightnessBox owner)
+    : FrameworkElementAutomationPeer(owner), IRangeValueProvider
+{
+    private BrightnessBox Box => (BrightnessBox)Owner;
+
+    public double Value => Box.Value;
+    public double Minimum => 0;
+    public double Maximum => 100;
+    public double SmallChange => 1;
+    public double LargeChange => 5;
+    public bool IsReadOnly => !Box.IsEnabled || !Box.IsInteractionEnabled;
+
+    public void SetValue(double value) => Box.SetValueFromAutomation((int)Math.Round(value, MidpointRounding.AwayFromZero));
+
+    public override object? GetPattern(PatternInterface patternInterface) =>
+        patternInterface == PatternInterface.RangeValue ? this : base.GetPattern(patternInterface);
+
+    internal void RaiseValueChanged(int oldValue, int newValue) =>
+        RaisePropertyChangedEvent(RangeValuePatternIdentifiers.ValueProperty, (double)oldValue, (double)newValue);
+
+    protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Slider;
+
+    protected override string GetClassNameCore() => nameof(BrightnessBox);
+
+    protected override bool IsContentElementCore() => true;
+
+    protected override bool IsControlElementCore() => true;
 }

@@ -12,6 +12,10 @@ internal sealed class MonitorEndpoint : IDisposable
     private readonly SafePhysicalMonitorHandle? _physicalHandle;
     private readonly WmiMonitorReader? _wmiReader;
     private readonly string? _wmiInstanceName;
+
+    // A display that doesn't answer is probed again outside MonitorService's operation gate, so its I/O, the
+    // state that I/O changes and disposal all take this lock.
+    private readonly object _ioLock = new();
     private bool _disposed;
 
     private MonitorEndpoint(
@@ -91,16 +95,23 @@ internal sealed class MonitorEndpoint : IDisposable
 
     /// <summary>Probes a display that did not answer DDC/CI again, without touching other displays.</summary>
     /// <returns>True when the display now answers.</returns>
+    /// <returns>True when the display now answers; false as well when the display has been disposed.</returns>
     public bool TryReconnect(BrightnessBackendKind knownBackend)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        if (CanReconnect)
+        lock (_ioLock)
         {
-            ProbeDdc(knownBackend);
-        }
+            if (_disposed)
+            {
+                return false;
+            }
 
-        return Status == MonitorSupportStatus.Ready;
+            if (CanReconnect)
+            {
+                ProbeDdc(knownBackend);
+            }
+
+            return Status == MonitorSupportStatus.Ready;
+        }
     }
 
     private void ProbeDdc(BrightnessBackendKind knownBackend)
@@ -191,6 +202,14 @@ internal sealed class MonitorEndpoint : IDisposable
 
     public MonitorSnapshot ToSnapshot(string? displayName = null)
     {
+        lock (_ioLock)
+        {
+            return CreateSnapshot(displayName);
+        }
+    }
+
+    private MonitorSnapshot CreateSnapshot(string? displayName)
+    {
         return new MonitorSnapshot(
             Id,
             FriendlyName,
@@ -207,6 +226,14 @@ internal sealed class MonitorEndpoint : IDisposable
     }
 
     public int SetBrightness(int percent, BrightnessWriteMode mode = BrightnessWriteMode.Commit)
+    {
+        lock (_ioLock)
+        {
+            return SetBrightnessCore(percent, mode);
+        }
+    }
+
+    private int SetBrightnessCore(int percent, BrightnessWriteMode mode)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -450,13 +477,15 @@ internal sealed class MonitorEndpoint : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
+        lock (_ioLock)
         {
-            return;
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            _physicalHandle?.Dispose();
         }
-
-        _disposed = true;
-        _physicalHandle?.Dispose();
     }
-
 }
