@@ -51,6 +51,35 @@ public sealed class ApplicationBehaviorTests
     }
 
     [TestMethod]
+    public void DeviceChange_RejectsShortOrNonInterfacePayloadsBeforeReadingTheGuid()
+    {
+        foreach (var size in new[] { 4, 8, 12, 20, 27 })
+        {
+            // Keep a matching GUID beyond the declared payload: it must not make a malformed message match.
+            var buffer = Marshal.AllocHGlobal(28);
+            try
+            {
+                Marshal.WriteInt32(buffer, 0, size);
+                Marshal.WriteInt32(buffer, 4, NativeMethods.DBT_DEVTYP_DEVICEINTERFACE);
+                Marshal.StructureToPtr(NativeMethods.GUID_DEVINTERFACE_MONITOR, IntPtr.Add(buffer, 12), false);
+                Assert.IsFalse(MonitorCenter.UI.FlyoutWindow.IsMonitorInterfaceChange(
+                    new IntPtr(NativeMethods.DBT_DEVICEARRIVAL), buffer), $"Declared size {size}");
+            }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
+
+        var volume = Marshal.AllocHGlobal(20);
+        try
+        {
+            Marshal.WriteInt32(volume, 0, 20);
+            Marshal.WriteInt32(volume, 4, 2); // DBT_DEVTYP_VOLUME
+            Assert.IsFalse(MonitorCenter.UI.FlyoutWindow.IsMonitorInterfaceChange(
+                new IntPtr(NativeMethods.DBT_DEVICEARRIVAL), volume));
+        }
+        finally { Marshal.FreeHGlobal(volume); }
+    }
+
+    [TestMethod]
     public void WakeAndUnlock_TriggerRefresh_ButOtherPowerAndSessionEventsDoNot()
     {
         const int suspend = 0x0004;

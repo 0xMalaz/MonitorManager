@@ -276,11 +276,33 @@ internal sealed class FlyoutViewModel : INotifyPropertyChanged
             .Select(profile => existing.TryGetValue(profile, out var tile) ? tile : new ProfileTileViewModel(profile))
             .ToList();
 
-        ProfileTiles.Clear();
-        foreach (var tile in desired)
+        // Keep WPF item containers (and their focus/edit state) alive when only a name changes.
+        for (var index = ProfileTiles.Count - 1; index >= 0; index--)
         {
+            if (!desired.Contains(ProfileTiles[index]))
+            {
+                ProfileTiles.RemoveAt(index);
+            }
+        }
+
+        for (var index = 0; index < desired.Count; index++)
+        {
+            var tile = desired[index];
             tile.RefreshName();
-            ProfileTiles.Add(tile);
+            if (index < ProfileTiles.Count && ReferenceEquals(ProfileTiles[index], tile))
+            {
+                continue;
+            }
+
+            var currentIndex = ProfileTiles.IndexOf(tile);
+            if (currentIndex >= 0)
+            {
+                ProfileTiles.Move(currentIndex, index);
+            }
+            else
+            {
+                ProfileTiles.Insert(index, tile);
+            }
         }
 
         if (!ProfileTiles.Any(tile => tile.IsRenaming))

@@ -13,6 +13,71 @@ namespace MonitorCenter.Tests;
 public sealed class MonitorRowViewModelTests
 {
     [TestMethod]
+    public void IdenticalSnapshots_DoNotNotifyBindingsOrWriteBrightness() => RunOnDispatcher(async dispatcher =>
+    {
+        var writes = 0;
+        await using var service = new MonitorService();
+        await using var row = new MonitorRowViewModel(Snapshot(), service, dispatcher,
+            (_, value, _, _) => { writes++; return Task.FromResult(value); });
+        var properties = new List<string?>();
+        row.PropertyChanged += (_, e) => properties.Add(e.PropertyName);
+        for (var index = 0; index < 100; index++) row.UpdateSnapshot(Snapshot());
+        row.SetDisplayName(row.DisplayName);
+        Assert.AreEqual(0, properties.Count);
+        Assert.AreEqual(0, writes);
+    });
+
+    [TestMethod]
+    public void ChangedSnapshot_NotifiesOnlyChangedValuesWithoutWriting() => RunOnDispatcher(async dispatcher =>
+    {
+        var writes = 0;
+        var adjustments = 0;
+        await using var service = new MonitorService();
+        await using var row = new MonitorRowViewModel(Snapshot(), service, dispatcher,
+            (_, value, _, _) => { writes++; return Task.FromResult(value); });
+        var properties = new List<string?>();
+        row.PropertyChanged += (_, e) => properties.Add(e.PropertyName);
+        row.UserAdjusted += (_, _) => adjustments++;
+
+        row.UpdateSnapshot(Snapshot() with { CurrentRaw = 75 });
+        CollectionAssert.AreEquivalent(new[] { "CurrentPercent", "BrightnessText" }, properties);
+        Assert.AreEqual(75, row.CurrentPercent);
+        Assert.AreEqual(75, row.AppliedPercent);
+        properties.Clear();
+
+        row.UpdateSnapshot(row.Snapshot with { DisplayName = "Desk", Backend = BrightnessBackendKind.DdcVcp });
+        CollectionAssert.AreEquivalent(new[] { "DisplayName", "ToolTip" }, properties);
+        StringAssert.Contains(row.ToolTip, "VCP");
+        Assert.AreEqual(0, writes);
+        Assert.AreEqual(0, adjustments);
+    });
+
+    [TestMethod]
+    public void StatusChanges_RefreshDerivedTextEvenWhenErrorMessageIsUnchanged() => RunOnDispatcher(async dispatcher =>
+    {
+        var unavailable = Snapshot() with
+        {
+            Status = MonitorSupportStatus.Unavailable,
+            Backend = BrightnessBackendKind.None,
+            ErrorMessage = "Waiting for display"
+        };
+        await using var service = new MonitorService();
+        await using var row = new MonitorRowViewModel(unavailable, service, dispatcher);
+        var properties = new List<string?>();
+        row.PropertyChanged += (_, e) => properties.Add(e.PropertyName);
+        row.UpdateSnapshot(unavailable with { Status = MonitorSupportStatus.Reconnecting });
+        CollectionAssert.AreEquivalent(new[] { "CompactStatusText", "ToolTip" }, properties);
+        Assert.AreEqual("Reconnecting…", row.CompactStatusText);
+
+        properties.Clear();
+        row.UpdateSnapshot(unavailable with { ErrorMessage = null });
+        CollectionAssert.Contains(properties, "HasStatus");
+        CollectionAssert.Contains(properties, "HasCompactStatus");
+        Assert.IsFalse(row.HasStatus);
+        Assert.IsFalse(row.HasCompactStatus);
+    });
+
+    [TestMethod]
     public void LateWriteResult_DoesNotOverrideNewerInput() => RunOnDispatcher(async dispatcher =>
     {
         var releaseFirstWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

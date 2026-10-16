@@ -1,4 +1,5 @@
 using System.IO;
+using System.Collections.Specialized;
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Windows.Threading;
@@ -13,6 +14,47 @@ namespace MonitorCenter.Tests;
 [DoNotParallelize]
 public sealed class ProfileEditingTests
 {
+    [TestMethod]
+    public void ProfileChanges_KeepExistingTilesWithoutCollectionResets() => RunWithCoordinator(async (coordinator, _) =>
+    {
+        var first = new BrightnessProfile { Name = "First" };
+        var second = new BrightnessProfile { Name = "Second" };
+        coordinator.Profiles.Add(first);
+        coordinator.Profiles.Add(second);
+        var viewModel = new FlyoutViewModel(coordinator);
+        var originalTiles = viewModel.ProfileTiles.ToArray();
+        var changes = new List<NotifyCollectionChangedAction>();
+        viewModel.ProfileTiles.CollectionChanged += (_, e) => changes.Add(e.Action);
+
+        viewModel.StartProfileRename(originalTiles[1]);
+        originalTiles[1].EditName = "Unfinished rename";
+        await coordinator.RenameProfileAsync(first, "Work");
+        Assert.AreEqual(0, changes.Count, "Renaming must not recreate any profile container.");
+        Assert.AreSame(originalTiles[0], viewModel.ProfileTiles[0]);
+        Assert.AreSame(originalTiles[1], viewModel.ProfileTiles[1]);
+        Assert.AreEqual("Work", originalTiles[0].Name);
+        Assert.IsTrue(originalTiles[1].IsRenaming);
+        Assert.AreEqual("Unfinished rename", originalTiles[1].EditName);
+
+        await coordinator.DeleteProfileAsync(first);
+        CollectionAssert.AreEqual(new[] { NotifyCollectionChangedAction.Remove }, changes);
+        Assert.AreSame(originalTiles[1], viewModel.ProfileTiles.Single());
+        Assert.IsTrue(originalTiles[1].IsRenaming);
+
+        // Membership and order changes retain existing tiles too.
+        changes.Clear();
+        var third = new BrightnessProfile { Name = "Third" };
+        coordinator.Profiles.Insert(0, third);
+        await coordinator.RenameProfileAsync(third, "Evening");
+        CollectionAssert.AreEqual(new[] { NotifyCollectionChangedAction.Add }, changes);
+        Assert.AreSame(originalTiles[1], viewModel.ProfileTiles[1]);
+        changes.Clear();
+        coordinator.Profiles.Move(1, 0);
+        await coordinator.RenameProfileAsync(third, "Night");
+        CollectionAssert.AreEqual(new[] { NotifyCollectionChangedAction.Move }, changes);
+        Assert.AreSame(originalTiles[1], viewModel.ProfileTiles[0]);
+    });
+
     [TestMethod]
     public void RenameProfile_SavesTrimmedNameAndRejectsDuplicatesAndBlanks() => RunWithCoordinator(async (coordinator, store) =>
     {

@@ -287,29 +287,36 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
             return;
         }
 
-        Snapshot = snapshot;
-        _suppressWrite = true;
-        try
+        if (Snapshot == snapshot && _currentPercent == snapshot.CurrentPercent &&
+            _appliedPercent == snapshot.CurrentPercent && _statusText == snapshot.ErrorMessage)
         {
-            _appliedPercent = snapshot.CurrentPercent;
-            CurrentPercent = snapshot.CurrentPercent;
-            StatusText = snapshot.ErrorMessage;
-        }
-        finally
-        {
-            _suppressWrite = false;
+            return;
         }
 
-        OnPropertyChanged(nameof(DisplayName));
-        OnPropertyChanged(nameof(ToolTip));
-        OnPropertyChanged(nameof(BrightnessText));
+        var previous = (DisplayName, IsControllable, CurrentPercent, BrightnessText, StatusText,
+            HasStatus, CompactStatusText, HasCompactStatus, ToolTip);
+        Snapshot = snapshot;
+        // A discovery updates the backing values directly: it must never queue a brightness write.
+        _appliedPercent = snapshot.CurrentPercent;
+        _currentPercent = snapshot.CurrentPercent;
+        _statusText = snapshot.ErrorMessage;
+
+        if (previous.DisplayName != DisplayName) OnPropertyChanged(nameof(DisplayName));
+        if (previous.IsControllable != IsControllable) OnPropertyChanged(nameof(IsControllable));
+        if (previous.CurrentPercent != CurrentPercent) OnPropertyChanged(nameof(CurrentPercent));
+        if (previous.BrightnessText != BrightnessText) OnPropertyChanged(nameof(BrightnessText));
+        if (previous.StatusText != StatusText) OnPropertyChanged(nameof(StatusText));
+        if (previous.HasStatus != HasStatus) OnPropertyChanged(nameof(HasStatus));
+        if (previous.CompactStatusText != CompactStatusText) OnPropertyChanged(nameof(CompactStatusText));
+        if (previous.HasCompactStatus != HasCompactStatus) OnPropertyChanged(nameof(HasCompactStatus));
+        if (previous.ToolTip != ToolTip) OnPropertyChanged(nameof(ToolTip));
     }
 
     public void SetDisplayName(string displayName)
     {
+        if (DisplayName == displayName) return;
         Snapshot = Snapshot with { DisplayName = displayName };
         OnPropertyChanged(nameof(DisplayName));
-        OnPropertyChanged(nameof(ToolTip));
     }
 
     private void HandleFailed(Exception exception)
