@@ -16,5 +16,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\MonitorCenter\MonitorCenter.csproj" />
+    <EmbeddedResource Include="..\..\src\MonitorCenter\App.xaml" LogicalName="MonitorCenter.Tests.App.xaml" />
   </ItemGroup>
 </Project>

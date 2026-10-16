@@ -2,7 +2,9 @@ using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Markup;
 using System.Windows.Threading;
+using System.Xml.Linq;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using MonitorCenter.Models;
 using MonitorCenter.Services;
@@ -26,11 +28,11 @@ public sealed class FlyoutWindowTests
             System.Windows.Application? application = null;
             try
             {
-                var monitorApplication = new MonitorCenter.App
+                var monitorApplication = new TestApplication
                 {
-                    ShutdownMode = ShutdownMode.OnExplicitShutdown
+                    ShutdownMode = ShutdownMode.OnExplicitShutdown,
+                    Resources = LoadApplicationResources()
                 };
-                monitorApplication.InitializeComponent();
                 application = monitorApplication;
                 monitorService = new MonitorService();
                 coordinator = new MonitorCoordinator(monitorService, Dispatcher.CurrentDispatcher);
@@ -110,6 +112,8 @@ public sealed class FlyoutWindowTests
                 window.BeginShutdown();
                 window.BeginShutdown();
                 Finish(Task.WhenAll(pendingShow, pendingToggle, pendingRefresh));
+                Assert.IsTrue(monitorApplication.StartupDispatched,
+                    "The dispatcher should exercise the test application's isolated startup callback.");
                 Assert.IsFalse(activeRefresh.IsCompleted, "Shutdown must let the active discovery drain.");
                 Assert.IsFalse(window.IsVisible, "A queued activation reopened the flyout during shutdown.");
                 Finish(Task.WhenAll(window.RefreshAsync(), window.ShowFlyoutAsync(), window.ToggleAsync()));
@@ -153,6 +157,34 @@ public sealed class FlyoutWindowTests
         if (failure is not null)
         {
             ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+    }
+
+    private static ResourceDictionary LoadApplicationResources()
+    {
+        // Use the real resource definitions without constructing MonitorCenter.App. Its generated BAML loader
+        // cannot initialize a test-assembly subclass, and pumping its dispatcher would start production services.
+        using var stream = typeof(FlyoutWindowTests).Assembly.GetManifestResourceStream("MonitorCenter.Tests.App.xaml");
+        Assert.IsNotNull(stream);
+        var root = XDocument.Load(stream).Root!;
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        var resources = root.Element(presentation + "Application.Resources");
+        Assert.IsNotNull(resources);
+        var dictionary = new XElement(presentation + "ResourceDictionary",
+            root.Attributes().Where(attribute => attribute.IsNamespaceDeclaration), resources.Nodes());
+        using var reader = dictionary.CreateReader();
+        return (ResourceDictionary)XamlReader.Load(reader);
+    }
+
+    private sealed class TestApplication : System.Windows.Application
+    {
+        public bool StartupDispatched { get; private set; }
+
+        protected override void OnStartup(StartupEventArgs e)
+        {
+            // Application queues startup even without Run(). These tests pump the dispatcher to exercise
+            // continuations, but must never initialize the tray, single-instance signaling, updater or hardware.
+            StartupDispatched = true;
         }
     }
 }
