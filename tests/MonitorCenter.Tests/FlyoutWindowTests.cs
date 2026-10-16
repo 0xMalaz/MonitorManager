@@ -40,7 +40,9 @@ public sealed class FlyoutWindowTests
                 }
 
                 var viewModel = new FlyoutViewModel(coordinator);
-                var window = new FlyoutWindow(viewModel);
+                var releaseRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var refreshCalls = 0;
+                var window = new FlyoutWindow(viewModel, _ => { refreshCalls++; return releaseRefresh.Task; });
 
                 Assert.IsFalse(window.ShowInTaskbar);
                 Assert.AreEqual(ResizeMode.NoResize, window.ResizeMode);
@@ -98,7 +100,32 @@ public sealed class FlyoutWindowTests
                 Assert.AreEqual(Visibility.Visible, menuButton.Visibility);
                 window.Content = root;
 
+                // No real display discovery: hold a fake refresh open while shutdown cancels queued UI work.
+                var dispatcher = Dispatcher.CurrentDispatcher;
+                SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(dispatcher));
+                var activeRefresh = window.RefreshAsync(false);
+                var pendingShow = window.ShowFlyoutAsync();
+                var pendingToggle = window.ToggleAsync();
+                var pendingRefresh = window.RefreshAsync(true);
+                window.BeginShutdown();
+                window.BeginShutdown();
+                Finish(Task.WhenAll(pendingShow, pendingToggle, pendingRefresh));
+                Assert.IsFalse(activeRefresh.IsCompleted, "Shutdown must let the active discovery drain.");
+                Assert.IsFalse(window.IsVisible, "A queued activation reopened the flyout during shutdown.");
+                Finish(Task.WhenAll(window.RefreshAsync(), window.ShowFlyoutAsync(), window.ToggleAsync()));
+                releaseRefresh.SetResult();
+                Finish(activeRefresh);
+                Assert.AreEqual(1, refreshCalls, "Pending refreshes must not start after shutdown begins.");
                 window.AllowCloseAndClose();
+
+                void Finish(Task task)
+                {
+                    var frame = new DispatcherFrame();
+                    _ = task.ContinueWith(_ => dispatcher.BeginInvoke(() => frame.Continue = false),
+                        TaskScheduler.Default);
+                    Dispatcher.PushFrame(frame);
+                    task.GetAwaiter().GetResult();
+                }
             }
             catch (Exception exception)
             {

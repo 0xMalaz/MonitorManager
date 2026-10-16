@@ -61,8 +61,11 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
-            _trayIcon.ShowError($"MonitorCenter could not initialize: {exception.Message}");
+            _trayIcon?.ShowError($"MonitorCenter could not initialize: {exception.Message}");
         }
+
+        // Exit/update can be requested while the initial discovery is still awaiting hardware.
+        if (_isShuttingDown != 0) return;
 
 #if !DEBUG
         if (!options.IsStartupLaunch)
@@ -73,7 +76,7 @@ public partial class App : System.Windows.Application
             }
             catch (Exception exception) when (exception is UnauthorizedAccessException or IOException)
             {
-                _trayIcon.ShowError("Start with Windows could not be enabled.");
+                _trayIcon?.ShowError("Start with Windows could not be enabled.");
             }
         }
 #endif
@@ -116,6 +119,7 @@ public partial class App : System.Windows.Application
             _updates = null;
         }
 
+        _flyoutWindow?.BeginShutdown();
         _flyoutWindow?.Hide();
         if (_monitorCoordinator is not null)
         {

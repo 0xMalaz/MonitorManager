@@ -26,6 +26,7 @@ public sealed class BrightnessBox : FrameworkElement
     private static readonly DependencyProperty TileStrongBorderProperty = RegisterBrush("TileStrongBorder");
     private static readonly DependencyProperty TileFocusBorderProperty = RegisterBrush("TileFocusBorder");
     private bool _isDragging;
+    private int _wheelDelta;
 
     public static readonly DependencyProperty ValueProperty = DependencyProperty.Register(
         nameof(Value),
@@ -51,7 +52,7 @@ public sealed class BrightnessBox : FrameworkElement
         SnapsToDevicePixels = true;
         IsEnabledChanged += (_, _) => InvalidateVisual();
         MouseEnter += (_, _) => InvalidateVisual();
-        MouseLeave += (_, _) => InvalidateVisual();
+        MouseLeave += (_, _) => { _wheelDelta = 0; InvalidateVisual(); };
         GotKeyboardFocus += (_, _) => InvalidateVisual();
         LostKeyboardFocus += (_, _) => InvalidateVisual();
         SetResourceReference(TileBackgroundProperty, "TileBackgroundBrush");
@@ -204,9 +205,25 @@ public sealed class BrightnessBox : FrameworkElement
             return;
         }
 
-        Value = Math.Clamp(Value + (e.Delta > 0 ? 2 : -2), 0, 100);
-        ValueCommitRequested?.Invoke(this, EventArgs.Empty);
+        var steps = ConsumeWheelDelta(ref _wheelDelta, e.Delta);
+        if (steps != 0)
+        {
+            Value = (int)Math.Clamp(Value + (long)steps * 2, 0, 100);
+            // Keep explicit commits even at 0/100: they may supersede an in-flight profile write.
+            ValueCommitRequested?.Invoke(this, EventArgs.Empty);
+        }
         e.Handled = true;
+    }
+
+    /// <summary>High-resolution wheels can split a notch across several events; only whole notches commit.</summary>
+    internal static int ConsumeWheelDelta(ref int remainder, int delta)
+    {
+        if (delta == 0) return 0;
+        if (Math.Sign(remainder) != Math.Sign(delta)) remainder = 0;
+        var total = (long)remainder + delta;
+        var steps = (int)(total / Mouse.MouseWheelDeltaForOneLine);
+        remainder = (int)(total % Mouse.MouseWheelDeltaForOneLine);
+        return steps;
     }
 
     protected override void OnKeyDown(WpfKeyEventArgs e)

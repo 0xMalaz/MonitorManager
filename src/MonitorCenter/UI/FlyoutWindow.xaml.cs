@@ -15,6 +15,8 @@ public partial class FlyoutWindow : Window
 {
     private readonly FlyoutViewModel _viewModel;
     private readonly SemaphoreSlim _visibilityGate = new(1, 1);
+    private readonly RefreshRequestQueue _refreshRequests;
+    private readonly Func<bool, Task> _refreshDisplays;
     private readonly DispatcherTimer _displayChangeTimer;
     private readonly DispatcherTimer _wakeTimer;
     private HwndSource? _windowSource;
@@ -26,9 +28,11 @@ public partial class FlyoutWindow : Window
     private bool _allowClose;
     private bool _disposed;
 
-    internal FlyoutWindow(FlyoutViewModel viewModel)
+    internal FlyoutWindow(FlyoutViewModel viewModel, Func<bool, Task>? refreshDisplays = null)
     {
         _viewModel = viewModel;
+        _refreshDisplays = refreshDisplays ?? (reprobe => _viewModel.RefreshAsync(reprobe));
+        _refreshRequests = new RefreshRequestQueue(RefreshCoreAsync);
         DataContext = viewModel;
         InitializeComponent();
         SourceInitialized += OnSourceInitialized;
@@ -73,9 +77,11 @@ public partial class FlyoutWindow : Window
 
     public async Task ToggleAsync()
     {
+        if (_disposed) return;
         await _visibilityGate.WaitAsync();
         try
         {
+            if (_disposed) return;
             if (IsVisible) Hide(); else await ShowFlyoutCoreAsync();
         }
         finally { _visibilityGate.Release(); }
@@ -83,21 +89,26 @@ public partial class FlyoutWindow : Window
 
     public async Task ShowFlyoutAsync()
     {
+        if (_disposed) return;
         await _visibilityGate.WaitAsync();
         try
         {
+            if (_disposed) return;
             if (IsVisible) { Activate(); return; }
             await ShowFlyoutCoreAsync();
         }
         finally { _visibilityGate.Release(); }
     }
 
-    public async Task RefreshAsync(bool reprobeKnownDisplays = true)
+    public Task RefreshAsync(bool reprobeKnownDisplays = true) =>
+        _refreshRequests.RequestAsync(reprobeKnownDisplays);
+
+    private async Task RefreshCoreAsync(bool reprobeKnownDisplays)
     {
         if (_disposed) return;
         NativeMethods.GetCursorPos(out var cursor);
-        await _viewModel.RefreshAsync(reprobeKnownDisplays);
-        if (IsVisible)
+        await _refreshDisplays(reprobeKnownDisplays);
+        if (!_disposed && IsVisible)
         {
             UpdateLayout();
             PositionNearTaskbar(cursor);
@@ -109,8 +120,9 @@ public partial class FlyoutWindow : Window
         NativeMethods.GetCursorPos(out var cursor);
         if (_viewModel.Monitors.Count == 0)
         {
-            await _viewModel.RefreshAsync();
+            await RefreshAsync();
         }
+        if (_disposed) return;
         Opacity = 0;
         Show();
         UpdateLayout();
@@ -244,6 +256,7 @@ public partial class FlyoutWindow : Window
             // Wait for the context menu to close and give focus back to the flyout.
             Dispatcher.BeginInvoke(() =>
             {
+                if (_disposed) return;
                 Activate();
                 textBox.Focus();
                 textBox.SelectAll();
@@ -316,6 +329,7 @@ public partial class FlyoutWindow : Window
 
     private IntPtr WindowProcedure(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        if (_disposed) return IntPtr.Zero;
         // Top-level windows receive a WM_DEVICECHANGE broadcast for every USB, Bluetooth, or dock change;
         // only monitor interface arrivals and removals warrant a display refresh.
         if (message == NativeMethods.WM_DISPLAYCHANGE ||
@@ -378,9 +392,15 @@ public partial class FlyoutWindow : Window
             return false;
         }
 
-        var header = Marshal.PtrToStructure<NativeMethods.DevBroadcastDeviceInterface>(lParam);
-        return header.DeviceType == NativeMethods.DBT_DEVTYP_DEVICEINTERFACE &&
-               header.ClassGuid == NativeMethods.GUID_DEVINTERFACE_MONITOR;
+        // Other device types (for example volumes) have shorter payloads. Read only the common header first,
+        // then the interface GUID if the declared size and device type permit it.
+        const int headerSize = 12;
+        const int interfaceGuidEnd = headerSize + 16;
+        var size = Marshal.ReadInt32(lParam);
+        return size >= headerSize &&
+               Marshal.ReadInt32(lParam, 4) == NativeMethods.DBT_DEVTYP_DEVICEINTERFACE &&
+               size >= interfaceGuidEnd &&
+               Marshal.PtrToStructure<Guid>(IntPtr.Add(lParam, headerSize)) == NativeMethods.GUID_DEVINTERFACE_MONITOR;
     }
 
     private void RegisterMonitorNotifications(IntPtr handle)
@@ -465,10 +485,12 @@ public partial class FlyoutWindow : Window
         }, DispatcherPriority.Loaded);
     }
 
-    public void AllowCloseAndClose()
+    /// <summary>Stops new work before the app starts draining monitor services.</summary>
+    public void BeginShutdown()
     {
+        if (_disposed) return;
         _disposed = true;
-        _allowClose = true;
+        _refreshRequests.Stop();
         _displayChangeTimer.Stop();
         _wakeTimer.Stop();
         ThemeManager.ThemeChanged -= OnThemeChanged;
@@ -489,7 +511,13 @@ public partial class FlyoutWindow : Window
         }
         _windowSource?.RemoveHook(WindowProcedure);
         _windowSource = null;
+    }
+
+    public void AllowCloseAndClose()
+    {
+        BeginShutdown();
+        _allowClose = true;
         Close();
-        _visibilityGate.Dispose();
+        // Show/toggle continuations may still need to release this managed gate after shutdown starts.
     }
 }

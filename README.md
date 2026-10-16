@@ -37,7 +37,7 @@ MonitorCenter only checks for, downloads and installs updates when you ask it to
 ## Usage
 
 - **Open the flyout:** click the MonitorCenter icon in the notification area.
-- **Set brightness:** click inside a display's square. The bottom is 0%, the middle 50%, and the top 100%. Hold and drag up or down to adjust continuously. You can also use the mouse wheel or the arrow keys.
+- **Set brightness:** click inside a display's square. The bottom is 0%, the middle 50%, and the top 100%. Hold and drag up or down to adjust continuously. You can also use the mouse wheel (2% per notch, including high-resolution wheels) or the arrow keys.
 - **Rename a display:** click the **⋮** button on its square and choose **Rename**, type the new name in place, then click the check button (or press Enter). Esc cancels.
 - **Profiles:** choose **New Profile**, enter a name, and choose **Save** to store the current brightness of every display. Click a profile at the top of the flyout to apply it. Its **⋮** button renames it the same way as a display, or deletes it.
 - **Close the flyout:** press **Escape**, click elsewhere, or click the tray icon again.

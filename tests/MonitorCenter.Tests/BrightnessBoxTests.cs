@@ -1,5 +1,6 @@
 using System.Runtime.ExceptionServices;
 using System.Threading;
+using System.Windows.Input;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
@@ -11,6 +12,32 @@ namespace MonitorCenter.Tests;
 [TestClass]
 public sealed class BrightnessBoxTests
 {
+    [TestMethod]
+    public void WheelDelta_AccumulatesPartialNotchesAndPreservesRemainder()
+    {
+        var remainder = 0;
+        for (var index = 0; index < 3; index++)
+            Assert.AreEqual(0, BrightnessBox.ConsumeWheelDelta(ref remainder, 30));
+        Assert.AreEqual(1, BrightnessBox.ConsumeWheelDelta(ref remainder, 30));
+        Assert.AreEqual(0, remainder);
+        Assert.AreEqual(2, BrightnessBox.ConsumeWheelDelta(ref remainder, 270));
+        Assert.AreEqual(30, remainder);
+        Assert.AreEqual(1, BrightnessBox.ConsumeWheelDelta(ref remainder, 90));
+    }
+
+    [TestMethod]
+    public void WheelDelta_ResetsPartialNotchOnDirectionChangeAndIgnoresZero()
+    {
+        var remainder = 0;
+        Assert.AreEqual(0, BrightnessBox.ConsumeWheelDelta(ref remainder, 90));
+        Assert.AreEqual(0, BrightnessBox.ConsumeWheelDelta(ref remainder, 0));
+        Assert.AreEqual(90, remainder);
+        Assert.AreEqual(0, BrightnessBox.ConsumeWheelDelta(ref remainder, -30));
+        Assert.AreEqual(-30, remainder);
+        Assert.AreEqual(-1, BrightnessBox.ConsumeWheelDelta(ref remainder, -90));
+        Assert.AreEqual(-2, BrightnessBox.ConsumeWheelDelta(ref remainder, -240));
+    }
+
     [TestMethod]
     public void ValueFromY_MapsBottomMiddleAndTopToBrightness()
     {
@@ -57,10 +84,32 @@ public sealed class BrightnessBoxTests
                 Assert.AreEqual(65, box.Value);
                 Assert.AreEqual(1, commits);
 
+                void Wheel(int delta) => box.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, 0, delta)
+                {
+                    RoutedEvent = Mouse.MouseWheelEvent
+                });
+                Wheel(30);
+                Wheel(30);
+                Wheel(30);
+                Assert.AreEqual(65, box.Value);
+                Assert.AreEqual(1, commits, "Partial notches must not trigger hardware commits.");
+                Wheel(30);
+                Assert.AreEqual(67, box.Value);
+                Assert.AreEqual(2, commits);
+                Wheel(-240);
+                Assert.AreEqual(63, box.Value);
+                Assert.AreEqual(3, commits);
+                range.SetValue(100);
+                Wheel(120);
+                Assert.AreEqual(100, box.Value);
+                Assert.AreEqual(5, commits, "A full notch at the boundary must still supersede profile writes.");
+
                 box.IsInteractionEnabled = false;
                 Assert.IsTrue(range.IsReadOnly);
                 Assert.ThrowsExactly<ElementNotEnabledException>(() => range.SetValue(10));
-                Assert.AreEqual(65, box.Value);
+                Wheel(-120);
+                Assert.AreEqual(100, box.Value);
+                Assert.AreEqual(5, commits);
             }
             catch (Exception exception)
             {
