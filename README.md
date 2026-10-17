@@ -10,6 +10,10 @@
   <a href="https://github.com/0xMalaz/MonitorManager/releases/latest/download/MonitorCenter-Setup.exe"><b>Download MonitorCenter-Setup.exe</b></a>
 </p>
 
+<p align="center">
+  <img src="docs/screenshot.png" width="354" alt="The MonitorCenter flyout: three displays at 50% brightness and three profiles, with Half active">
+</p>
+
 ## Features
 
 - One slider per display, all in a single tray flyout.
