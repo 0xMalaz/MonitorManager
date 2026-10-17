@@ -25,7 +25,7 @@ Run `MonitorCenter-Setup.exe`. It installs for your user only, without admin rig
 
 The installer isn't code-signed, so SmartScreen may warn you. Choose **More info**, then **Run anyway**.
 
-To update, right-click the tray icon and choose **Check for updates**. MonitorCenter never updates on its own.
+MonitorCenter checks for a new version every 8 hours and when you open its tray menu (at most once every 30 minutes). When one is available, the tray menu shows **Install update** instead of **Check for updates**. MonitorCenter only downloads and installs an update when you choose it.
 
 To uninstall, go to **Settings > Apps > Installed apps**. Your profiles and display names are kept in `%LOCALAPPDATA%\MonitorCenter\settings.json`.
 
