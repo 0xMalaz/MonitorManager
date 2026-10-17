@@ -17,7 +17,7 @@ public static class Strings
     // Flyout
     public static string Displays => T("Displays", "Ekranlar");
     public static string RefreshDisplays => T("Refresh displays", "Ekranları yenile");
-    public static string ProfilesHeader => T("PROFILES", "PROFİLLER");
+    public static string ProfilesHeader => T("Profiles", "Profiller");
     public static string NewProfile => T("New Profile", "Yeni Profil");
     public static string ApplyProfile => T("Apply profile", "Profili uygula");
     public static string ProfileName => T("Profile name", "Profil adı");

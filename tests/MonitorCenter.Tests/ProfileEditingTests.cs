@@ -277,6 +277,46 @@ public sealed class ProfileEditingTests
         Assert.AreEqual(profile.Id, coordinator.ActiveProfileId);
     });
 
+    [TestMethod]
+    public void ActiveProfileTile_IsMarkedAndClickingItAgainWritesNothing() => RunWithCoordinator(async (coordinator, _) =>
+    {
+        var writes = new List<int>();
+        await using var monitorService = new MonitorService();
+        var row = CreateRow("monitor-1", monitorService, value =>
+        {
+            lock (writes)
+            {
+                writes.Add(value);
+            }
+
+            return Task.FromResult(value);
+        });
+        coordinator.Monitors.Add(row);
+        coordinator.Profiles.Add(CreateProfile(("monitor-1", 30)));
+        var evening = CreateProfile(("monitor-1", 80));
+        evening.Name = "Evening";
+        coordinator.Profiles.Add(evening);
+        var viewModel = new FlyoutViewModel(coordinator);
+        var (work, eveningTile) = (viewModel.ProfileTiles[0], viewModel.ProfileTiles[1]);
+
+        await viewModel.ApplyProfileAsync(work);
+        Assert.IsTrue(work.IsActive);
+        Assert.IsFalse(eveningTile.IsActive);
+        CollectionAssert.AreEqual(new[] { 30 }, writes);
+
+        await viewModel.ApplyProfileAsync(work);
+        CollectionAssert.AreEqual(new[] { 30 }, writes, "The active profile was applied again.");
+
+        await viewModel.ApplyProfileAsync(eveningTile);
+        Assert.IsFalse(work.IsActive);
+        Assert.IsTrue(eveningTile.IsActive);
+
+        // Changing a display by hand means the setup is no longer the profile.
+        row.CurrentPercent = 60;
+        await row.FlushAsync();
+        Assert.IsFalse(eveningTile.IsActive);
+    });
+
     private static MonitorRowViewModel CreateRow(string id, MonitorService monitorService, Func<int, Task<int>> write) => new(
         new MonitorSnapshot(
             id, id, id, null, @"\\.\DISPLAY1", new DesktopBounds(0, 0, 1920, 1080),
