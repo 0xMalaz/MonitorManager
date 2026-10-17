@@ -14,11 +14,10 @@ internal sealed class UpdateCoordinator(IAppUpdater updater, Action shutdown, Ti
     /// <summary>The shortest time between background checks, which keeps them well inside GitHub's rate limit.</summary>
     internal static readonly TimeSpan MinimumCheckInterval = TimeSpan.FromMinutes(30);
 
-    internal const string UnavailableMessage =
-        "Updates are unavailable in development or unpackaged builds. Install MonitorCenter-Setup.exe first.";
-    internal const string CheckingMessage = "Checking for updates…";
-    internal const string UpToDateMessage = "MonitorCenter is up to date.";
-    internal const string RestartingMessage = "Restarting to apply the update…";
+    internal static string UnavailableMessage => Strings.UpdatesUnavailable;
+    internal static string CheckingMessage => Strings.CheckingForUpdates;
+    internal static string UpToDateMessage => Strings.UpToDate;
+    internal static string RestartingMessage => Strings.RestartingToUpdate;
 
     private readonly CancellationTokenSource _lifetime = new();
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
@@ -27,7 +26,7 @@ internal sealed class UpdateCoordinator(IAppUpdater updater, Action shutdown, Ti
     private int _running;
     private bool _disposed;
 
-    public UpdateStatus Status { get; private set; } = new(UpdateStage.Idle, "Check for updates");
+    public UpdateStatus Status { get; private set; } = new(UpdateStage.Idle, Strings.CheckForUpdates);
 
     /// <summary>The newer version found by the last check, or null when none is known.</summary>
     public string? AvailableVersion { get; private set; }
@@ -114,18 +113,18 @@ internal sealed class UpdateCoordinator(IAppUpdater updater, Action shutdown, Ti
                     return;
                 }
 
-                Report(new(UpdateStage.Downloading, $"Downloading {version}…"));
+                Report(new(UpdateStage.Downloading, Strings.DownloadStarting(version)));
                 var downloading = true;
                 var progress = new Progress<int>(percent =>
                 {
                     if (_disposed || !downloading || Status.Stage != UpdateStage.Downloading) return;
                     var clamped = Math.Clamp(percent, 0, 100);
-                    Report(new(UpdateStage.Downloading, $"Downloading {version}: {clamped}%", clamped));
+                    Report(new(UpdateStage.Downloading, Strings.DownloadProgress(version, clamped), clamped));
                 });
                 try { await updater.DownloadAsync(progress, token); }
                 finally { downloading = false; }
                 token.ThrowIfCancellationRequested();
-                Report(new(UpdateStage.Downloading, $"Downloaded {version}: 100%", 100));
+                Report(new(UpdateStage.Downloading, Strings.DownloadComplete(version), 100));
             }
 
             token.ThrowIfCancellationRequested();
@@ -139,7 +138,7 @@ internal sealed class UpdateCoordinator(IAppUpdater updater, Action shutdown, Ti
         }
         catch (Exception exception)
         {
-            Report(new(UpdateStage.Failed, $"Update failed: {exception.Message}\nTry again from the tray menu."));
+            Report(new(UpdateStage.Failed, Strings.UpdateFailed(exception.Message)));
         }
         finally
         {

@@ -170,8 +170,14 @@ public sealed class FlyoutWindowTests
         XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
         var resources = root.Element(presentation + "Application.Resources");
         Assert.IsNotNull(resources);
-        var dictionary = new XElement(presentation + "ResourceDictionary",
-            root.Attributes().Where(attribute => attribute.IsNamespaceDeclaration), resources.Nodes());
+        // Loose XAML needs the assembly named in clr-namespace mappings that compiled XAML resolves on its own.
+        var namespaces = root.Attributes()
+            .Where(attribute => attribute.IsNamespaceDeclaration)
+            .Select(attribute => attribute.Value.StartsWith("clr-namespace:", StringComparison.Ordinal) &&
+                                 !attribute.Value.Contains(";assembly=", StringComparison.Ordinal)
+                ? new XAttribute(attribute.Name, $"{attribute.Value};assembly=MonitorCenter")
+                : attribute);
+        var dictionary = new XElement(presentation + "ResourceDictionary", namespaces, resources.Nodes());
         using var reader = dictionary.CreateReader();
         return (ResourceDictionary)XamlReader.Load(reader);
     }

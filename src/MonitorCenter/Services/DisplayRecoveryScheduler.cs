@@ -8,7 +8,7 @@ namespace MonitorCenter.Services;
 /// </summary>
 internal sealed class DisplayRecoveryScheduler : IDisposable
 {
-    internal const string ReconnectingMessage = "Reconnecting to the display…";
+    internal static string ReconnectingMessage => Strings.ReconnectingToDisplay;
 
     /// <summary>When each recheck runs, counted from the refresh that left a display unavailable.</summary>
     internal static readonly TimeSpan[] RecheckTimes =

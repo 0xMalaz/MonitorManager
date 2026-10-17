@@ -22,7 +22,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
     private readonly HashSet<string> _controllableIds = new(StringComparer.OrdinalIgnoreCase);
     private bool _isRefreshing;
     private bool _disposed;
-    private string _emptyMessage = "No displays detected.";
+    private string _emptyMessage = Strings.NoDisplaysDetected;
     private Guid? _activeProfileId;
     private int _userAdjustments;
     private AppSettings _settings = new();
@@ -161,7 +161,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
             }
             catch (Exception exception)
             {
-                await _dispatcher.InvokeAsync(() => EmptyMessage = $"Display detection failed: {exception.Message}");
+                await _dispatcher.InvokeAsync(() => EmptyMessage = Strings.DisplayDetectionFailed(exception.Message));
                 return false;
             }
 
@@ -184,7 +184,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
                     StringComparer.OrdinalIgnoreCase);
                 removedRows = UpdateMonitorRows(snapshots);
 
-                EmptyMessage = "No displays detected.";
+                EmptyMessage = Strings.NoDisplaysDetected;
                 OnPropertyChanged(nameof(ShowEmptyState));
                 OnPropertyChanged(nameof(HasControllableMonitors));
                 MonitorsChanged?.Invoke(this, EventArgs.Empty);
@@ -283,14 +283,14 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
             var canCreate = await _dispatcher.InvokeAsync(() => Profiles.Count < MaxProfileCount);
             if (!canCreate)
             {
-                throw new InvalidOperationException("You can save up to three profiles.");
+                throw new InvalidOperationException(Strings.TooManyProfiles);
             }
 
             var duplicateName = await _dispatcher.InvokeAsync(() => Profiles.Any(profile =>
                 string.Equals(profile.Name, normalizedName, StringComparison.OrdinalIgnoreCase)));
             if (duplicateName)
             {
-                throw new InvalidOperationException("A profile with that name already exists.");
+                throw new InvalidOperationException(Strings.DuplicateProfileName);
             }
 
             var monitorSettings = await CaptureCurrentSetupAsync(cancellationToken).ConfigureAwait(false);
@@ -321,7 +321,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
     {
         if (string.IsNullOrWhiteSpace(name))
         {
-            throw new InvalidOperationException("Enter a profile name.");
+            throw new InvalidOperationException(Strings.EnterProfileName);
         }
 
         var normalizedName = AppSettingsStore.NormalizeName(name);
@@ -332,13 +332,13 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
             {
                 if (!Profiles.Contains(profile))
                 {
-                    return "That profile no longer exists.";
+                    return Strings.ProfileNoLongerExists;
                 }
 
                 if (Profiles.Any(other => !ReferenceEquals(other, profile) &&
                         string.Equals(other.Name, normalizedName, StringComparison.OrdinalIgnoreCase)))
                 {
-                    return "A profile with that name already exists.";
+                    return Strings.DuplicateProfileName;
                 }
 
                 profile.Name = normalizedName;
@@ -400,7 +400,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         var normalizedName = AppSettingsStore.NormalizeDisplayName(name);
         if (normalizedName.Length == 0)
         {
-            throw new InvalidOperationException("Enter a display name.");
+            throw new InvalidOperationException(Strings.EnterDisplayName);
         }
 
         await _dispatcher.InvokeAsync(() =>
@@ -493,7 +493,7 @@ internal sealed class MonitorCoordinator : INotifyPropertyChanged, IAsyncDisposa
         var rows = await _dispatcher.InvokeAsync(() => Monitors.Where(row => row.IsControllable).ToArray());
         if (rows.Length == 0)
         {
-            throw new InvalidOperationException("No controllable displays are available to save.");
+            throw new InvalidOperationException(Strings.NoControllableDisplays);
         }
 
         foreach (var row in rows)

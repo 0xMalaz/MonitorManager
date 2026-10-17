@@ -63,7 +63,7 @@ public partial class App : System.Windows.Application
 
         if (Program.UpdatedToVersion is { } updatedVersion)
         {
-            _trayIcon.ShowInfo($"MonitorCenter was updated to version {updatedVersion}.");
+            _trayIcon.ShowInfo(Strings.UpdatedToVersion(updatedVersion));
         }
 
         try
@@ -72,7 +72,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
-            _trayIcon?.ShowError($"MonitorCenter could not initialize: {exception.Message}");
+            _trayIcon?.ShowError(Strings.InitializationFailed(exception.Message));
         }
 
         // Exit/update can be requested while the initial discovery is still awaiting hardware.
@@ -87,7 +87,7 @@ public partial class App : System.Windows.Application
             }
             catch (Exception exception) when (exception is UnauthorizedAccessException or IOException)
             {
-                _trayIcon?.ShowError("Start with Windows could not be enabled.");
+                _trayIcon?.ShowError(Strings.StartWithWindowsFailed);
             }
         }
 #endif
@@ -148,7 +148,7 @@ public partial class App : System.Windows.Application
         if (version is null || version == _notifiedUpdateVersion || _updateWindow is not null) return;
         _notifiedUpdateVersion = version;
         _trayIcon?.ShowInfo(
-            $"MonitorCenter {version} is available. Click here or use the tray menu to install it.",
+            Strings.UpdateAvailable(version),
             () => OnUpdateRequested(this, EventArgs.Empty));
     }
 
