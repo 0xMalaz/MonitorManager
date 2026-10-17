@@ -1,125 +1,77 @@
-# MonitorCenter
+<p align="center">
+  <img src="docs/icon.png" width="128" height="128" alt="MonitorCenter icon">
+</p>
 
-A lightweight Windows 11 tray app for changing the real hardware brightness of your monitors, all from one place.
+<h1 align="center">MonitorCenter</h1>
 
-MonitorCenter lives in the notification area. It has no main window and stays out of the taskbar and Alt+Tab.
+<p align="center">Set the real brightness of all your monitors from the Windows 11 tray.</p>
+
+<p align="center">
+  <a href="https://github.com/0xMalaz/MonitorManager/releases/latest/download/MonitorCenter-Setup.exe"><b>Download MonitorCenter-Setup.exe</b></a>
+</p>
 
 ## Features
 
-- Adjust the brightness of every connected display from a single tray flyout.
-- Uses the monitor's own brightness control (DDC/CI), not a software dimming overlay.
-- Supports built-in laptop screens through Windows' brightness control.
-- Save up to three brightness profiles and switch between them with one click.
-- Rename displays so they're easy to tell apart.
+- One slider per display, all in a single tray flyout.
+- Changes the monitor's own backlight over DDC/CI instead of dimming the picture with an overlay.
+- Works with laptop screens too.
+- Up to three brightness profiles, one click to apply.
+- Rename displays so you can tell them apart.
 - Follows the Windows light and dark theme.
-- Picks up monitors as they're connected or disconnected.
-- Keeps itself up to date from GitHub releases.
 
 ## Install
 
-1. Download [`MonitorCenter-Setup.exe`](https://github.com/0xMalaz/MonitorManager/releases/latest/download/MonitorCenter-Setup.exe) from the [latest release](https://github.com/0xMalaz/MonitorManager/releases/latest).
-2. Run it. MonitorCenter installs for your user account only, so it doesn't need administrator rights, and adds a Start menu shortcut.
+Run `MonitorCenter-Setup.exe`. It installs for your user only, without admin rights, and starts with Windows. You can turn that off in the tray menu.
 
-The app is self-contained, so you don't need to install .NET. Windows SmartScreen may warn you the first time, because the installer isn't code-signed; choose **More info** and then **Run anyway**.
+The installer isn't code-signed, so SmartScreen may warn you. Choose **More info**, then **Run anyway**.
 
-When you start it normally for the first time, MonitorCenter adds itself to Windows startup for your user account. You can turn this off with **Start with Windows** in the tray menu.
+To update, right-click the tray icon and choose **Check for updates**. MonitorCenter never updates on its own.
 
-To uninstall, use **Settings > Apps > Installed apps**. Your profiles and display names are kept.
+To uninstall, go to **Settings > Apps > Installed apps**. Your profiles and display names are kept in `%LOCALAPPDATA%\MonitorCenter\settings.json`.
 
-### Updating from 1.0.0
-
-Version 1.0.0 was a plain zip without an updater. Exit it from the tray menu, then install with `MonitorCenter-Setup.exe` as above. You can delete the old folder afterwards. Your settings carry over.
-
-## Updates
-
-MonitorCenter only checks for, downloads and installs updates when you ask it to. Right-click the tray icon and choose **Check for updates**. The item shows the progress, then either **No new updates** or **Updated!**, after which MonitorCenter restarts.
+If you still use 1.0.0 (the zip version), exit it and run the installer. Your settings carry over.
 
 ## Usage
 
-- **Open the flyout:** click the MonitorCenter icon in the notification area.
-- **Set brightness:** click inside a display's square. The bottom is 0%, the middle 50%, and the top 100%. Hold and drag up or down to adjust continuously. You can also use the mouse wheel (2% per notch, including high-resolution wheels) or the arrow keys.
-- **Rename a display:** click the **⋮** button on its square and choose **Rename**, type the new name in place, then click the check button (or press Enter). Esc cancels.
-- **Profiles:** choose **New Profile**, enter a name, and choose **Save** to store the current brightness of every display. Click a profile at the top of the flyout to apply it. Its **⋮** button renames it the same way as a display, or deletes it.
-- **Close the flyout:** press **Escape**, click elsewhere, or click the tray icon again.
-- **Tray menu:** right-click the icon to refresh displays, toggle **Start with Windows**, check for updates, or exit.
+- Click the tray icon to open the flyout.
+- Click or drag inside a display's square to set brightness. Bottom is 0%, top is 100%. The mouse wheel and arrow keys work too.
+- Use a display's **⋮** button to rename it.
+- **New Profile** saves the current brightness of every display. Click a profile to apply it.
+- Right-click the tray icon to check for updates, toggle **Start with Windows**, or exit.
 
-Profiles and display names are saved to `%LOCALAPPDATA%\MonitorCenter\settings.json`.
+## A display shows as unavailable
 
-## Display support
+External monitors are controlled over DDC/CI and laptop screens through Windows. If a display is greyed out:
 
-| Display | How brightness is controlled |
-| --- | --- |
-| External monitors | DDC/CI, using the Windows monitor configuration API, with MCCS VCP code `0x10` as a fallback |
-| Built-in laptop screens | Windows WMI brightness control |
+1. Turn on **DDC/CI** in the monitor's on-screen menu.
+2. Try another cable or port.
+3. Click the refresh button at the top of the flyout.
 
-Displays that can't be controlled still appear, greyed out, and their tooltip explains why. MonitorCenter never saves settings to a monitor's internal memory.
+Some docks and adapters don't pass DDC/CI through at all.
 
-Some monitors drop part of their DDC/CI replies. MonitorCenter retries each display a few times when it detects it, then asks a display that didn't answer again after 1, 3 and 10 seconds. It also refreshes a few seconds after the PC wakes up, the screens turn back on, or you unlock it. A display that worked earlier and stops answering shows **Reconnecting…** while these retries run.
+## Build from source
 
-### A display shows as unavailable
-
-1. Turn on **DDC/CI** in the monitor's on-screen menu, if it has that option.
-2. Try a different cable (DisplayPort or HDMI) or a different port on your graphics card.
-3. Right-click the tray icon and choose **Refresh displays**.
-
-Some monitors, docks, and adapters don't pass DDC/CI through at all.
-
-## Building from source
-
-Requirements: Windows 11 x64 and the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
+You need Windows 11 x64 and the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
 
 ```powershell
-git clone https://github.com/0xMalaz/MonitorManager.git
-cd MonitorManager
 dotnet build MonitorCenter.sln -c Release
 dotnet test MonitorCenter.sln -c Release --no-build
 dotnet publish src\MonitorCenter\MonitorCenter.csproj -c Release -r win-x64 --self-contained true -o dist
 ```
 
-The published app is `dist\MonitorCenter.exe`. Builds run this way can't update themselves; **Check for updates** says **Updates need the installed app**.
-
-### Hardware tests
-
-Tests that talk to real monitors are skipped by default, so a normal test run never changes your monitor settings. To run them:
-
-```powershell
-# Read-only display discovery
-$env:MONITORCENTER_HARDWARE_TESTS = '1'
-
-# Also change brightness slightly on each display, then restore it
-$env:MONITORCENTER_HARDWARE_WRITE_TESTS = '1'
-
-dotnet test tests\MonitorCenter.Tests\MonitorCenter.Tests.csproj -c Release --filter "FullyQualifiedName~HardwareIntegrationTests"
-```
+Tests that touch real monitors are skipped unless you set `MONITORCENTER_HARDWARE_TESTS=1`. Setting `MONITORCENTER_HARDWARE_WRITE_TESTS=1` as well lets them change brightness slightly and then restore it.
 
 ## Releasing
 
-Releases are built by the [Release workflow](.github/workflows/release.yml) with [Velopack](https://velopack.io), which produces the installer and the update packages that installed copies download.
-
-1. Raise `<Version>` in `src/MonitorCenter/MonitorCenter.csproj`, for example to `1.2.0`, and commit it to `main`.
-2. Tag that commit and push the tag:
-
-   ```powershell
-   git tag v1.2.0
-   git push origin v1.2.0
-   ```
-
-The workflow checks that the tag matches the project version, runs the tests, and publishes the GitHub release. Installed copies get it when their user chooses **Check for updates**.
-
-To try a release locally before publishing it, build it into a folder and point an installed copy at that folder:
+Raise `<Version>` in `src/MonitorCenter/MonitorCenter.csproj`, merge it to `main`, then tag that commit:
 
 ```powershell
-./tools/Build-Release.ps1 -Version 1.2.0 -OutputDir C:\Temp\feed
-$env:MONITORCENTER_UPDATE_SOURCE = 'C:\Temp\feed'
-& "$env:LOCALAPPDATA\0xMalaz.MonitorCenter\MonitorCenter.exe"
+git tag v1.6.0
+git push origin v1.6.0
 ```
 
-Don't change the Velopack pack id (`0xMalaz.MonitorCenter`) in `tools/Build-Release.ps1`; installed copies use it to find their updates.
-
-## Contributing
-
-Issues and pull requests are welcome. Please run the tests before opening a pull request.
+The [release workflow](.github/workflows/release.yml) runs the tests and publishes the installer and update packages with [Velopack](https://velopack.io).
 
 ## License
 
-MonitorCenter is released under the [MIT License](LICENSE).
+[MIT](LICENSE)
