@@ -19,8 +19,8 @@ How it fits together:
 
 - `src/MonitorCenter/Program.cs` is the entry point. `VelopackApp.Build()...Run()` must stay the first thing in `Main`, before WPF starts; Velopack runs install, update and uninstall hooks there and may exit the process. `App.xaml` is compiled as a `Page` and `StartupObject` is set in the csproj for this reason; don't turn it back into an `ApplicationDefinition`.
 - `Services/AppUpdater.cs` (`IAppUpdater`, `VelopackAppUpdater`) is the only code that talks to Velopack. Updates are applied with `WaitExitThenApplyUpdates` followed by the app's normal graceful shutdown (`App.OnExitRequested`), so the tray icon and single-instance mutex are released before the updater restarts the app with `--startup`. Don't switch to `ApplyUpdatesAndRestart`, which exits the process abruptly.
-- `Services/UpdateCoordinator.cs` drives the tray menu item text ("Check for updates" → "Checking for updates…" → "No new updates" / "Updating… n%" → "Updated!"). Updates are checked, downloaded and installed only when the user clicks that item: there are no background checks, and `Program.cs` turns off Velopack's auto-apply on startup. Keep it that way unless the user asks otherwise. It is unit-tested through a fake `IAppUpdater` in `tests/MonitorCenter.Tests/UpdateCoordinatorTests.cs`; extend those tests when changing its behaviour.
-- `UI/TrayIconController.cs` hosts the menu item (`StaysOpenOnClick`, header bound to `MenuText`) and clickable notifications.
+- `Services/UpdateCoordinator.cs` runs one update attempt per click and reports an `UpdateStatus` (Checking → NoUpdate / Downloading n% → Restarting, or Unavailable / Failed), which `UI/UpdateWindow.cs` shows as a small window with a progress bar. Updates are checked, downloaded and installed only when the user clicks "Check for updates": there are no background checks, and `Program.cs` turns off Velopack's auto-apply on startup. Keep it that way unless the user asks otherwise. It is unit-tested through a fake `IAppUpdater` in `tests/MonitorCenter.Tests/UpdateCoordinatorTests.cs`; extend those tests when changing its behaviour.
+- `UI/TrayIconController.cs` hosts the tray icon, a plain default-styled Windows Forms `ContextMenuStrip` (Check for updates, Start with Windows, Exit) and clickable notifications. Keep the menu unstyled. The icon is registered natively with a fixed GUID rather than through Windows Forms' `NotifyIcon`, because Windows remembers whether the icon is shown on the taskbar by that GUID; changing it would hide the icon again for every installed copy. The csproj removes the `System.Windows.Forms` and `System.Drawing` global usings so WPF type names stay unambiguous.
 - `StartupRegistration.Unregister()` runs at uninstall and only removes the startup entry if it points at the copy being uninstalled.
 
 Rules:
@@ -28,7 +28,7 @@ Rules:
 - **Never change the pack id `0xMalaz.MonitorCenter`** in `tools/Build-Release.ps1`. Installed copies find their updates by it, and it decides the install folder (`%LocalAppData%\0xMalaz.MonitorCenter`). It is deliberately different from the settings folder `%LocalAppData%\MonitorCenter`, so uninstalling never deletes user settings.
 - Keep `--mainExe MonitorCenter.exe` matching the assembly name, and keep `RepositoryUrl` in `AppUpdater.cs` pointing at this repo.
 - Don't upgrade the `Velopack` NuGet package without upgrading `vpk` in `dotnet-tools.json` to the same version.
-- Builds run with `dotnet run` or from `dist\` are not installed, so updating is unavailable there and the menu says "Updates need the installed app". That is expected.
+- Builds run with `dotnet run` or from `dist\` are not installed, so updating is unavailable there and the update window says so. That is expected.
 
 ### Releasing
 
@@ -51,4 +51,4 @@ $env:MONITORCENTER_UPDATE_SOURCE = 'C:\Temp\feed'
 Start-Process C:\Temp\mc-install\MonitorCenter.exe -ArgumentList '--startup'
 ```
 
-Then use **Check for updates** in the tray menu. `MONITORCENTER_UPDATE_SOURCE` makes the app read updates from that folder instead of GitHub. Only one MonitorCenter runs per user (single-instance mutex), so exit any other running copy first, and restore it afterwards. Clean up with `C:\Temp\mc-install\Update.exe uninstall --silent`. The test install rewrites the "Start with Windows" registry entry (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `MonitorCenter`) when launched without `--startup`; note its value before testing and put it back after.
+Then use **Check for updates** in the tray menu; the update window should show the check, the download progress, and Velopack's own progress while it installs. `MONITORCENTER_UPDATE_SOURCE` makes the app read updates from that folder instead of GitHub. Only one MonitorCenter runs per user (single-instance mutex), so exit any other running copy first, and restore it afterwards. Clean up with `C:\Temp\mc-install\Update.exe uninstall --silent`. The test install rewrites the "Start with Windows" registry entry (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `MonitorCenter`) when launched without `--startup`; note its value before testing and put it back after.

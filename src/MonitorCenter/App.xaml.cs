@@ -15,6 +15,7 @@ public partial class App : System.Windows.Application
     private TrayIconController? _trayIcon;
     private StartupRegistration? _startupRegistration;
     private UpdateCoordinator? _updates;
+    private UpdateWindow? _updateWindow;
     private int _isShuttingDown;
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -45,9 +46,10 @@ public partial class App : System.Windows.Application
                              System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ??
                              Path.Combine(AppContext.BaseDirectory, "MonitorCenter.exe");
         _startupRegistration = new StartupRegistration(executablePath);
-        _updates = new UpdateCoordinator(new VelopackAppUpdater());
-        _updates.RestartRequested += OnExitRequested;
-        _trayIcon = new TrayIconController(_flyoutWindow, _startupRegistration, _updates);
+        _updates = new UpdateCoordinator(new VelopackAppUpdater(), () => OnExitRequested(this, EventArgs.Empty));
+        _updates.StatusChanged += status => _updateWindow?.Render(status);
+        _trayIcon = new TrayIconController(_flyoutWindow, _startupRegistration);
+        _trayIcon.UpdateRequested += OnUpdateRequested;
         _trayIcon.ExitRequested += OnExitRequested;
 
         if (Program.UpdatedToVersion is { } updatedVersion)
@@ -98,6 +100,20 @@ public partial class App : System.Windows.Application
         });
     }
 
+    private async void OnUpdateRequested(object? sender, EventArgs e)
+    {
+        if (_isShuttingDown != 0 || _updates is null) return;
+        if (_updateWindow is null)
+        {
+            _updateWindow = new UpdateWindow();
+            _updateWindow.Closed += (_, _) => _updateWindow = null;
+        }
+        _updateWindow.Render(_updates.Status);
+        _updateWindow.Show();
+        _updateWindow.Activate();
+        await _updates.RunAsync();
+    }
+
     private async void OnExitRequested(object? sender, EventArgs e)
     {
         if (Interlocked.Exchange(ref _isShuttingDown, 1) != 0)
@@ -107,17 +123,15 @@ public partial class App : System.Windows.Application
 
         if (_trayIcon is not null)
         {
+            _trayIcon.UpdateRequested -= OnUpdateRequested;
             _trayIcon.ExitRequested -= OnExitRequested;
             _trayIcon.Dispose();
             _trayIcon = null;
         }
 
-        if (_updates is not null)
-        {
-            _updates.RestartRequested -= OnExitRequested;
-            _updates.Dispose();
-            _updates = null;
-        }
+        _updates?.Dispose();
+        _updates = null;
+        _updateWindow?.Close();
 
         _flyoutWindow?.BeginShutdown();
         _flyoutWindow?.Hide();

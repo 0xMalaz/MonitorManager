@@ -7,124 +7,144 @@ namespace MonitorCenter.Tests;
 public sealed class UpdateCoordinatorTests
 {
     [TestMethod]
-    public async Task CheckNow_WithoutUpdate_ShowsNoUpdatesThenReturnsToIdle()
+    public async Task Run_WithoutUpdate_ChecksThenSaysUpToDate()
     {
         var updater = new FakeUpdater();
-        using var coordinator = new UpdateCoordinator(updater, NoDelay);
-        var texts = RecordMenuText(coordinator);
+        var shutdowns = 0;
+        using var coordinator = new UpdateCoordinator(updater, () => shutdowns++);
+        var stages = RecordStages(coordinator);
 
-        await coordinator.CheckNowAsync();
+        await coordinator.RunAsync();
 
-        CollectionAssert.AreEqual(
-            new[] { UpdateCoordinator.CheckingText, UpdateCoordinator.NoUpdatesText, UpdateCoordinator.IdleText },
-            texts.Distinct().ToArray());
+        CollectionAssert.AreEqual(new[] { UpdateStage.Checking, UpdateStage.NoUpdate }, stages);
+        Assert.AreEqual(UpdateCoordinator.UpToDateMessage, coordinator.Status.Message);
         Assert.AreEqual(0, updater.ApplyCount);
+        Assert.AreEqual(0, shutdowns);
     }
 
     [TestMethod]
-    public async Task CheckNow_WithUpdate_DownloadsThenRestartsIntoIt()
+    public async Task Run_WithUpdate_ReportsDownloadProgressThenRestartsIntoIt()
     {
-        var updater = new FakeUpdater { AvailableVersion = "1.1.0" };
-        using var coordinator = new UpdateCoordinator(updater, NoDelay);
-        var texts = RecordMenuText(coordinator);
-        var restartRequested = false;
-        coordinator.RestartRequested += (_, _) => restartRequested = true;
+        var sawProgress = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var updater = new FakeUpdater { AvailableVersion = "1.1.0", ProgressSteps = [40], DownloadGate = sawProgress.Task };
+        var shutdowns = 0;
+        using var coordinator = new UpdateCoordinator(updater, () => shutdowns++);
+        var statuses = new List<UpdateStatus>();
+        coordinator.StatusChanged += status =>
+        {
+            lock (statuses) statuses.Add(status);
+            if (status.Progress == 40) sawProgress.TrySetResult();
+        };
 
-        await coordinator.CheckNowAsync();
+        await coordinator.RunAsync();
 
-        CollectionAssert.IsSubsetOf(
-            new[] { UpdateCoordinator.CheckingText, UpdateCoordinator.UpdatingText, UpdateCoordinator.UpdatedText },
-            texts);
-        Assert.IsTrue(
-            texts.IndexOf(UpdateCoordinator.UpdatingText) < texts.IndexOf(UpdateCoordinator.UpdatedText));
+        Assert.AreEqual(UpdateStage.Checking, statuses[0].Stage);
+        Assert.AreEqual("Downloading 1.1.0…", statuses[1].Message);
+        Assert.IsTrue(statuses.Any(status => status is { Stage: UpdateStage.Downloading, Progress: 40 }));
+        Assert.IsTrue(statuses.All(status => status.Progress is >= 0 and <= 100));
+        Assert.AreEqual(UpdateStage.Restarting, statuses[^1].Stage);
         Assert.AreEqual(1, updater.DownloadCount);
         Assert.AreEqual(1, updater.ApplyCount);
-        Assert.IsTrue(restartRequested);
-        Assert.AreEqual(UpdateCoordinator.UpdatedText, coordinator.MenuText);
+        Assert.AreEqual(1, shutdowns);
     }
 
     [TestMethod]
-    public async Task CheckNow_WhenNotInstalled_ExplainsAndDoesNotContactGitHub()
+    public async Task Run_WhenNotInstalled_ExplainsAndDoesNotContactGitHub()
     {
         var updater = new FakeUpdater { CanUpdate = false };
-        using var coordinator = new UpdateCoordinator(updater, NoDelay);
-        var texts = RecordMenuText(coordinator);
+        using var coordinator = new UpdateCoordinator(updater, () => { });
 
-        await coordinator.CheckNowAsync();
+        await coordinator.RunAsync();
 
-        CollectionAssert.Contains(texts, UpdateCoordinator.UnavailableText);
+        Assert.AreEqual(UpdateStage.Unavailable, coordinator.Status.Stage);
+        Assert.AreEqual(UpdateCoordinator.UnavailableMessage, coordinator.Status.Message);
         Assert.AreEqual(0, updater.CheckCount);
-        Assert.AreEqual(UpdateCoordinator.IdleText, coordinator.MenuText);
     }
 
     [TestMethod]
-    public async Task CheckNow_WhenCheckFails_ShowsFailureThenReturnsToIdle()
+    public async Task Run_WhenCheckFails_ReportsFailureAndCanRetry()
     {
         var updater = new FakeUpdater { CheckFailure = new HttpRequestException("offline") };
-        using var coordinator = new UpdateCoordinator(updater, NoDelay);
-        var texts = RecordMenuText(coordinator);
+        using var coordinator = new UpdateCoordinator(updater, () => { });
 
-        await coordinator.CheckNowAsync();
+        await coordinator.RunAsync();
 
-        CollectionAssert.Contains(texts, UpdateCoordinator.FailedText);
-        Assert.AreEqual(UpdateCoordinator.IdleText, coordinator.MenuText);
+        Assert.AreEqual(UpdateStage.Failed, coordinator.Status.Stage);
+        StringAssert.Contains(coordinator.Status.Message, "offline");
         Assert.AreEqual(0, updater.ApplyCount);
+
+        updater.CheckFailure = null;
+        await coordinator.RunAsync();
+
+        Assert.AreEqual(2, updater.CheckCount);
+        Assert.AreEqual(UpdateStage.NoUpdate, coordinator.Status.Stage);
     }
 
     [TestMethod]
     public async Task Coordinator_NeverChecksUntilTheUserAsks()
     {
         var updater = new FakeUpdater { AvailableVersion = "1.1.0" };
-        var delays = new List<TimeSpan>();
-        using var coordinator = new UpdateCoordinator(updater, (delay, _) =>
-        {
-            delays.Add(delay);
-            return Task.CompletedTask;
-        });
+        using var coordinator = new UpdateCoordinator(updater, () => { });
 
         await Task.Yield();
 
         Assert.AreEqual(0, updater.CheckCount);
         Assert.AreEqual(0, updater.DownloadCount);
-        Assert.AreEqual(0, delays.Count);
-        Assert.AreEqual(UpdateCoordinator.IdleText, coordinator.MenuText);
+        Assert.AreEqual(UpdateStage.Idle, coordinator.Status.Stage);
     }
 
     [TestMethod]
-    public async Task CheckNow_WithDownloadedUpdate_RestartsWithoutCheckingAgain()
+    public async Task Run_WithDownloadedUpdate_RestartsWithoutCheckingAgain()
     {
         var updater = new FakeUpdater { PendingVersion = "1.1.0" };
-        using var coordinator = new UpdateCoordinator(updater, NoDelay);
+        var shutdowns = 0;
+        using var coordinator = new UpdateCoordinator(updater, () => shutdowns++);
 
-        await coordinator.CheckNowAsync();
+        await coordinator.RunAsync();
 
         Assert.AreEqual(0, updater.CheckCount);
         Assert.AreEqual(1, updater.ApplyCount);
+        Assert.AreEqual(1, shutdowns);
     }
 
     [TestMethod]
-    public async Task CheckNow_WhileCheckIsRunning_JoinsItInsteadOfStartingAnother()
+    public async Task Run_WhileCheckIsRunning_DoesNotStartAnother()
     {
         var release = new TaskCompletionSource();
         var updater = new FakeUpdater { CheckGate = release.Task };
-        using var coordinator = new UpdateCoordinator(updater, NoDelay);
+        using var coordinator = new UpdateCoordinator(updater, () => { });
 
-        var first = coordinator.CheckNowAsync();
-        var second = coordinator.CheckNowAsync();
-        Assert.AreEqual(UpdateCoordinator.CheckingText, coordinator.MenuText);
+        var first = coordinator.RunAsync();
+        var second = coordinator.RunAsync();
+        Assert.IsTrue(second.IsCompleted);
+        Assert.AreEqual(UpdateStage.Checking, coordinator.Status.Stage);
         release.SetResult();
-        await Task.WhenAll(first, second);
+        await first;
 
         Assert.AreEqual(1, updater.CheckCount);
     }
 
-    private static Task NoDelay(TimeSpan delay, CancellationToken cancellationToken) => Task.CompletedTask;
-
-    private static List<string> RecordMenuText(UpdateCoordinator coordinator)
+    [TestMethod]
+    public async Task Dispose_WhileChecking_StopsWithoutReportingFailure()
     {
-        var texts = new List<string>();
-        coordinator.PropertyChanged += (_, _) => texts.Add(coordinator.MenuText);
-        return texts;
+        var release = new TaskCompletionSource();
+        var updater = new FakeUpdater { AvailableVersion = "1.1.0", CheckGate = release.Task };
+        var coordinator = new UpdateCoordinator(updater, () => { });
+
+        var run = coordinator.RunAsync();
+        coordinator.Dispose();
+        release.SetResult();
+        await run;
+
+        Assert.AreEqual(UpdateStage.Checking, coordinator.Status.Stage);
+        Assert.AreEqual(0, updater.DownloadCount);
+    }
+
+    private static List<UpdateStage> RecordStages(UpdateCoordinator coordinator)
+    {
+        var stages = new List<UpdateStage>();
+        coordinator.StatusChanged += status => stages.Add(status.Stage);
+        return stages;
     }
 
     private sealed class FakeUpdater : IAppUpdater
@@ -134,11 +154,13 @@ public sealed class UpdateCoordinatorTests
         public string? AvailableVersion { get; set; }
         public Exception? CheckFailure { get; set; }
         public Task CheckGate { get; set; } = Task.CompletedTask;
+        public int[] ProgressSteps { get; set; } = [];
+        public Task DownloadGate { get; set; } = Task.CompletedTask;
         public int CheckCount { get; private set; }
         public int DownloadCount { get; private set; }
         public int ApplyCount { get; private set; }
 
-        public async Task<string?> CheckForUpdateAsync(CancellationToken cancellationToken)
+        public async Task<string?> CheckAsync(CancellationToken cancellationToken)
         {
             CheckCount++;
             await CheckGate;
@@ -146,11 +168,12 @@ public sealed class UpdateCoordinatorTests
             return AvailableVersion;
         }
 
-        public Task DownloadUpdateAsync(IProgress<int> progress, CancellationToken cancellationToken)
+        public async Task DownloadAsync(IProgress<int> progress, CancellationToken cancellationToken)
         {
             DownloadCount++;
+            foreach (var percent in ProgressSteps) progress.Report(percent);
+            await DownloadGate;
             PendingVersion = AvailableVersion;
-            return Task.CompletedTask;
         }
 
         public void ApplyAfterExit() => ApplyCount++;

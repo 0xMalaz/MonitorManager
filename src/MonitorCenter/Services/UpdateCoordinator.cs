@@ -1,138 +1,101 @@
-using System.ComponentModel;
-
 namespace MonitorCenter.Services;
 
+internal enum UpdateStage { Idle, Checking, Downloading, NoUpdate, Unavailable, Failed, Restarting }
+
+internal sealed record UpdateStatus(UpdateStage Stage, string Message, int Progress = 0);
+
 /// <summary>
-/// Runs update checks from the tray menu and exposes the tray menu text for them. MonitorCenter never checks for,
-/// downloads or installs an update unless the user clicks the menu item.
+/// Checks for, downloads and installs updates when the user clicks "Check for updates" in the tray menu.
+/// MonitorCenter never does any of this on its own. Status changes are raised on the caller's synchronization context.
 /// </summary>
-internal sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
+internal sealed class UpdateCoordinator(IAppUpdater updater, Action shutdown) : IDisposable
 {
-    internal const string IdleText = "Check for updates";
-    internal const string CheckingText = "Checking for updates…";
-    internal const string NoUpdatesText = "No new updates";
-    internal const string UpdatingText = "Updating…";
-    internal const string UpdatedText = "Updated!";
-    internal const string FailedText = "Update failed";
-    internal const string UnavailableText = "Updates need the installed app";
+    internal const string UnavailableMessage =
+        "Updates are unavailable in development or unpackaged builds. Install MonitorCenter-Setup.exe first.";
+    internal const string CheckingMessage = "Checking for updates…";
+    internal const string UpToDateMessage = "MonitorCenter is up to date.";
+    internal const string RestartingMessage = "Restarting to apply the update…";
 
-    internal static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(3);
-    internal static readonly TimeSpan UpdatedDuration = TimeSpan.FromSeconds(1.5);
-
-    private readonly IAppUpdater _updater;
-    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly CancellationTokenSource _lifetime = new();
-    private Task _operation = Task.CompletedTask;
-    private bool _isDownloading;
-    private string? _status;
+    private int _running;
     private bool _disposed;
 
-    public UpdateCoordinator(IAppUpdater updater, Func<TimeSpan, CancellationToken, Task>? delay = null)
-    {
-        _updater = updater;
-        _delay = delay ?? Task.Delay;
-    }
+    public UpdateStatus Status { get; private set; } = new(UpdateStage.Idle, "Check for updates");
 
-    public event PropertyChangedEventHandler? PropertyChanged;
-
-    /// <summary>Raised once the updater is waiting for the app to exit so it can install and restart.</summary>
-    public event EventHandler? RestartRequested;
-
-    public string MenuText =>
-        _status ?? (_updater.PendingVersion is { } version ? $"Restart to update to {version}" : IdleText);
+    public event Action<UpdateStatus>? StatusChanged;
 
     /// <summary>
-    /// Checks for an update and, if there is one, downloads it and restarts into it, showing progress in the menu.
-    /// A click while a check is running joins it.
+    /// Checks for an update and, if there is one, downloads it and restarts into it. Calls made while a run is in
+    /// progress return straight away.
     /// </summary>
-    public Task CheckNowAsync()
+    public async Task RunAsync()
     {
-        if (_disposed) return Task.CompletedTask;
-        if (_operation.IsCompleted)
-        {
-            _operation = RunAsync(_lifetime.Token);
-        }
-        return _operation;
-    }
-
-    private async Task RunAsync(CancellationToken cancellationToken)
-    {
+        if (_disposed || Interlocked.CompareExchange(ref _running, 1, 0) != 0) return;
         var restarting = false;
+        var token = _lifetime.Token;
         try
         {
-            if (!_updater.CanUpdate)
+            if (!updater.CanUpdate)
             {
-                await ShowResultAsync(UnavailableText, cancellationToken);
+                Report(new(UpdateStage.Unavailable, UnavailableMessage));
                 return;
             }
 
-            if (_updater.PendingVersion is null)
+            if (updater.PendingVersion is null)
             {
-                SetStatus(CheckingText);
-                if (await _updater.CheckForUpdateAsync(cancellationToken) is null)
+                Report(new(UpdateStage.Checking, CheckingMessage));
+                var version = await updater.CheckAsync(token);
+                token.ThrowIfCancellationRequested();
+                if (version is null)
                 {
-                    await ShowResultAsync(NoUpdatesText, cancellationToken);
+                    Report(new(UpdateStage.NoUpdate, UpToDateMessage));
                     return;
                 }
 
-                _isDownloading = true;
-                SetStatus(UpdatingText);
+                Report(new(UpdateStage.Downloading, $"Downloading {version}…"));
+                var downloading = true;
                 var progress = new Progress<int>(percent =>
                 {
-                    if (_isDownloading) SetStatus($"{UpdatingText} {Math.Clamp(percent, 0, 100)}%");
+                    if (_disposed || !downloading || Status.Stage != UpdateStage.Downloading) return;
+                    var clamped = Math.Clamp(percent, 0, 100);
+                    Report(new(UpdateStage.Downloading, $"Downloading {version}: {clamped}%", clamped));
                 });
-                await _updater.DownloadUpdateAsync(progress, cancellationToken);
-                _isDownloading = false;
+                try { await updater.DownloadAsync(progress, token); }
+                finally { downloading = false; }
+                token.ThrowIfCancellationRequested();
+                Report(new(UpdateStage.Downloading, $"Downloaded {version}: 100%", 100));
             }
 
-            SetStatus(UpdatedText);
-            await _delay(UpdatedDuration, cancellationToken);
-            _updater.ApplyAfterExit();
+            token.ThrowIfCancellationRequested();
+            updater.ApplyAfterExit();
             restarting = true;
-            RestartRequested?.Invoke(this, EventArgs.Empty);
+            Report(new(UpdateStage.Restarting, RestartingMessage));
+            shutdown();
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            _isDownloading = false;
-            await ShowResultAsync(FailedText, cancellationToken);
+            Report(new(UpdateStage.Failed, $"Update failed: {exception.Message}\nChoose Check for updates to retry."));
         }
         finally
         {
-            _isDownloading = false;
-            // While the app shuts down for the restart, keep showing that the update succeeded.
-            if (!restarting)
-            {
-                _status = null;
-                NotifyMenuTextChanged();
-            }
+            if (!restarting) Interlocked.Exchange(ref _running, 0);
         }
     }
 
-    /// <summary>Shows a result in the menu for a few seconds.</summary>
-    private async Task ShowResultAsync(string text, CancellationToken cancellationToken)
+    private void Report(UpdateStatus status)
     {
-        SetStatus(text);
-        try { await _delay(MessageDuration, cancellationToken); }
-        catch (OperationCanceledException) { }
+        Status = status;
+        StatusChanged?.Invoke(status);
     }
-
-    private void SetStatus(string text)
-    {
-        _status = text;
-        NotifyMenuTextChanged();
-    }
-
-    private void NotifyMenuTextChanged() =>
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(MenuText)));
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        // The source is not disposed: an outstanding check may still read its token after cancellation.
         _lifetime.Cancel();
-        _lifetime.Dispose();
     }
 }

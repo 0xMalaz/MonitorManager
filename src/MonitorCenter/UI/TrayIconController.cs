@@ -1,15 +1,10 @@
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Windows;
-using System.Windows.Controls.Primitives;
-using System.Windows.Data;
 using System.Windows.Interop;
 using MonitorCenter.Interop;
 using MonitorCenter.Services;
-using WpfContextMenu = System.Windows.Controls.ContextMenu;
-using WpfMenuItem = System.Windows.Controls.MenuItem;
-using WpfSeparator = System.Windows.Controls.Separator;
+using Forms = System.Windows.Forms;
 
 namespace MonitorCenter.UI;
 
@@ -21,23 +16,18 @@ internal sealed class TrayIconController : IDisposable
 
     private readonly FlyoutWindow _flyoutWindow;
     private readonly StartupRegistration _startupRegistration;
-    private readonly UpdateCoordinator _updates;
     private readonly HwndSource _messageSource;
     private readonly IntPtr _icon;
-    private readonly WpfContextMenu _contextMenu;
-    private readonly WpfMenuItem _startupItem;
+    private readonly Forms.ContextMenuStrip _contextMenu;
+    private readonly Forms.ToolStripMenuItem _startupItem;
     private readonly uint _taskbarCreatedMessage;
     private Action? _notificationClicked;
     private bool _disposed;
 
-    public TrayIconController(
-        FlyoutWindow flyoutWindow,
-        StartupRegistration startupRegistration,
-        UpdateCoordinator updates)
+    public TrayIconController(FlyoutWindow flyoutWindow, StartupRegistration startupRegistration)
     {
         _flyoutWindow = flyoutWindow;
         _startupRegistration = startupRegistration;
-        _updates = updates;
         _icon = CreateTrayIcon();
 
         _messageSource = new HwndSource(new HwndSourceParameters("MonitorCenter.TrayIcon")
@@ -49,30 +39,25 @@ internal sealed class TrayIconController : IDisposable
         _messageSource.AddHook(WindowProcedure);
         _taskbarCreatedMessage = NativeMethods.RegisterWindowMessage("TaskbarCreated");
 
-        _startupItem = CreateMenuItem("Start with Windows");
-        _startupItem.IsCheckable = true;
-        _startupItem.Click += (_, _) => SetStartupPreference(_startupItem.IsChecked);
-        // Keeps the menu open so the item can show the check's progress and result.
-        var updateItem = CreateMenuItem(UpdateCoordinator.IdleText);
-        updateItem.StaysOpenOnClick = true;
-        updateItem.SetBinding(WpfMenuItem.HeaderProperty, new Binding(nameof(UpdateCoordinator.MenuText)) { Source = _updates });
-        updateItem.Click += async (_, _) => await _updates.CheckNowAsync();
-        var exitItem = CreateMenuItem("Exit");
+        // The default Windows Forms menu, without custom colours or renderer, so it looks like a standard Windows menu.
+        var updateItem = new Forms.ToolStripMenuItem("Check for updates");
+        updateItem.Click += (_, _) => UpdateRequested?.Invoke(this, EventArgs.Empty);
+        _startupItem = new Forms.ToolStripMenuItem("Start with Windows");
+        _startupItem.Click += (_, _) => SetStartupPreference(!_startupItem.Checked);
+        var exitItem = new Forms.ToolStripMenuItem("Exit");
         exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
-        _contextMenu = new WpfContextMenu
-        {
-            Placement = PlacementMode.MousePoint
-        };
-        _contextMenu.SetResourceReference(FrameworkElement.StyleProperty, "TrayContextMenuStyle");
+        _contextMenu = new Forms.ContextMenuStrip();
         _contextMenu.Items.Add(updateItem);
-        _contextMenu.Items.Add(CreateSeparator());
+        _contextMenu.Items.Add(new Forms.ToolStripSeparator());
         _contextMenu.Items.Add(_startupItem);
-        _contextMenu.Items.Add(CreateSeparator());
+        _contextMenu.Items.Add(new Forms.ToolStripSeparator());
         _contextMenu.Items.Add(exitItem);
 
         AddIcon();
     }
+
+    public event EventHandler? UpdateRequested;
 
     public event EventHandler? ExitRequested;
 
@@ -159,43 +144,22 @@ internal sealed class TrayIconController : IDisposable
     private void ShowContextMenu()
     {
         RefreshStartupCheckmark();
-        _contextMenu.IsOpen = true;
-
-        // The menu must own the foreground so that clicking anywhere else dismisses it.
-        if (PresentationSource.FromVisual(_contextMenu) is HwndSource menuSource)
-        {
-            NativeMethods.SetForegroundWindow(menuSource.Handle);
-        }
+        // As NotifyIcon does: the app must own the foreground so that clicking anywhere else dismisses the menu.
+        NativeMethods.SetForegroundWindow(_messageSource.Handle);
+        _contextMenu.Show(Forms.Cursor.Position);
     }
 
     private void SetStartupPreference(bool enabled)
     {
         try { _startupRegistration.SetEnabled(enabled); }
-        catch
-        {
-            ShowError("Windows startup could not be updated.");
-            RefreshStartupCheckmark();
-        }
+        catch { ShowError("Windows startup could not be updated."); }
+        RefreshStartupCheckmark();
     }
 
     private void RefreshStartupCheckmark()
     {
-        try { _startupItem.IsChecked = _startupRegistration.IsEnabled; }
-        catch { _startupItem.IsChecked = false; }
-    }
-
-    private static WpfMenuItem CreateMenuItem(string header)
-    {
-        var item = new WpfMenuItem { Header = header };
-        item.SetResourceReference(FrameworkElement.StyleProperty, "TrayMenuItemStyle");
-        return item;
-    }
-
-    private static WpfSeparator CreateSeparator()
-    {
-        var separator = new WpfSeparator();
-        separator.SetResourceReference(FrameworkElement.StyleProperty, "TrayMenuSeparatorStyle");
-        return separator;
+        try { _startupItem.Checked = _startupRegistration.IsEnabled; }
+        catch { _startupItem.Checked = false; }
     }
 
     internal static IntPtr CreateTrayIcon()
@@ -269,7 +233,8 @@ internal sealed class TrayIconController : IDisposable
         _disposed = true;
         var data = CreateData(NativeMethods.NIF_GUID);
         NativeMethods.ShellNotifyIcon(NativeMethods.NIM_DELETE, ref data);
-        _contextMenu.IsOpen = false;
+        _contextMenu.Close();
+        _contextMenu.Dispose();
         _messageSource.RemoveHook(WindowProcedure);
         _messageSource.Dispose();
         NativeMethods.DestroyIcon(_icon);
