@@ -143,7 +143,7 @@ internal sealed class WmiMonitorReader
 
         if (!methodFound)
         {
-            throw new InvalidOperationException("The built-in display is no longer available.");
+            throw new InvalidOperationException(Strings.BuiltInDisplayUnavailable);
         }
     }
 

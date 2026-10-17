@@ -7,7 +7,7 @@ namespace MonitorCenter.Services;
 
 internal sealed class MonitorEndpoint : IDisposable
 {
-    private const string UnavailableMessage = "Brightness unavailable — check DDC/CI and the display cable.";
+    private static string UnavailableMessage => Strings.BrightnessUnavailable;
 
     private readonly SafePhysicalMonitorHandle? _physicalHandle;
     private readonly WmiMonitorReader? _wmiReader;
@@ -331,7 +331,7 @@ internal sealed class MonitorEndpoint : IDisposable
                 }
 
                 lastFailure = new InvalidOperationException(
-                    $"The display reported {actual}% after {requestedPercent}% was requested.");
+                    Strings.BrightnessMismatch(actual, requestedPercent));
             }
             catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
             {
@@ -341,7 +341,7 @@ internal sealed class MonitorEndpoint : IDisposable
             Thread.Sleep(80);
         }
 
-        throw lastFailure ?? new InvalidOperationException("The display did not confirm its brightness change.");
+        throw lastFailure ?? new InvalidOperationException(Strings.BrightnessNotConfirmed);
     }
 
     private void WriteDdc(int percent)

@@ -18,6 +18,7 @@
 - Up to three brightness profiles, one click to apply.
 - Rename displays so you can tell them apart.
 - Follows the Windows light and dark theme.
+- Shown in Turkish when Windows is set to Turkish, otherwise in English.
 
 ## Install
 

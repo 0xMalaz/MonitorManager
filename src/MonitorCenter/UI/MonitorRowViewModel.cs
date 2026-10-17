@@ -54,9 +54,9 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
     public bool IsControllable => Snapshot.IsControllable;
     public bool HasStatus => !string.IsNullOrWhiteSpace(StatusText);
     public string? CompactStatusText => HasStatus
-        ? Snapshot.Status == MonitorSupportStatus.Reconnecting ? "Reconnecting…"
-        : IsControllable ? "Try again"
-        : "Unavailable"
+        ? Snapshot.Status == MonitorSupportStatus.Reconnecting ? Strings.ReconnectingShort
+        : IsControllable ? Strings.TryAgain
+        : Strings.Unavailable
         : null;
     public bool HasCompactStatus => !string.IsNullOrWhiteSpace(CompactStatusText);
 
@@ -112,16 +112,16 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
     {
         get
         {
-            var serial = string.IsNullOrWhiteSpace(Snapshot.Serial) ? "Unknown" : Snapshot.Serial;
-            var backend = Snapshot.Status == MonitorSupportStatus.Reconnecting ? "Reconnecting" : Snapshot.Backend switch
+            var serial = string.IsNullOrWhiteSpace(Snapshot.Serial) ? Strings.Unknown : Snapshot.Serial;
+            var backend = Snapshot.Status == MonitorSupportStatus.Reconnecting ? Strings.Reconnecting : Snapshot.Backend switch
             {
                 BrightnessBackendKind.DdcHighLevel => "DDC/CI",
                 BrightnessBackendKind.DdcVcp => "DDC/CI VCP 0x10",
-                BrightnessBackendKind.WmiInternal => "Windows built-in display control",
-                _ => "Unavailable"
+                BrightnessBackendKind.WmiInternal => Strings.WindowsBuiltInControl,
+                _ => Strings.Unavailable
             };
 
-            var details = $"{Snapshot.FriendlyName}\nSerial: {serial}\n{Snapshot.DisplayDevice}\nControl: {backend}";
+            var details = $"{Snapshot.FriendlyName}\n{Strings.Serial}: {serial}\n{Snapshot.DisplayDevice}\n{Strings.Control}: {backend}";
             return HasStatus ? $"{details}\n{StatusText}" : details;
         }
     }
@@ -150,7 +150,7 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
         }
     }
 
-    public string BrightnessText => IsControllable ? $"{CurrentPercent}%" : "—";
+    public string BrightnessText => IsControllable ? Strings.Percent(CurrentPercent) : "—";
 
     public string? StatusText
     {
@@ -215,7 +215,7 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
     {
         if (!IsControllable || _writeCoordinator is null || _disposed)
         {
-            throw new InvalidOperationException(StatusText ?? "This display can't be controlled.");
+            throw new InvalidOperationException(StatusText ?? Strings.DisplayCannotBeControlled);
         }
 
         try
@@ -327,7 +327,7 @@ internal sealed class MonitorRowViewModel : INotifyPropertyChanged, IAsyncDispos
             {
                 StatusText = exception is InvalidOperationException
                     ? exception.Message
-                    : "Could not set brightness. Use Refresh displays and try again.";
+                    : Strings.CouldNotSetBrightness;
             }
         });
     }

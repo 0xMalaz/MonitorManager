@@ -14,7 +14,7 @@ internal sealed class UpdateWindow : Window
 
     public UpdateWindow()
     {
-        Title = "MonitorCenter updates";
+        Title = Strings.UpdatesTitle;
         SetResourceReference(BackgroundProperty, "WindowBackgroundBrush");
         SetResourceReference(ForegroundProperty, "PrimaryForegroundBrush");
         Width = 430;

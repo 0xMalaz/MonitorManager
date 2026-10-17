@@ -154,8 +154,7 @@ internal sealed class AppSettingsStore
         {
             if (_savingBlocked)
             {
-                throw new IOException(
-                    "MonitorCenter couldn't read its settings file, so it won't overwrite it. Restart MonitorCenter to save changes.");
+                throw new IOException(Strings.SettingsUnreadable);
             }
 
             var normalized = Normalize(settings);
@@ -267,7 +266,7 @@ internal sealed class AppSettingsStore
         var normalized = value?.Trim();
         if (string.IsNullOrWhiteSpace(normalized))
         {
-            return "Profile";
+            return Strings.Profile;
         }
 
         return normalized.Length <= 40 ? normalized : normalized[..40];

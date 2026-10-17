@@ -165,7 +165,7 @@ internal sealed class MonitorService : IAsyncDisposable
         {
             if (!_endpoints.TryGetValue(monitorId, out var endpoint))
             {
-                throw new InvalidOperationException("The display is no longer connected.");
+                throw new InvalidOperationException(Strings.DisplayDisconnected);
             }
 
             var requested = Math.Clamp(percent, 0, 100);

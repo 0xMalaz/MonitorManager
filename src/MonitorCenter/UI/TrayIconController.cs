@@ -43,9 +43,9 @@ internal sealed class TrayIconController : IDisposable
         // The default Windows Forms menu, without custom colours or renderer, so it looks like a standard Windows menu.
         _updateItem = new Forms.ToolStripMenuItem(CheckForUpdatesText);
         _updateItem.Click += (_, _) => UpdateRequested?.Invoke(this, EventArgs.Empty);
-        _startupItem = new Forms.ToolStripMenuItem("Start with Windows");
+        _startupItem = new Forms.ToolStripMenuItem(Strings.StartWithWindows);
         _startupItem.Click += (_, _) => SetStartupPreference(!_startupItem.Checked);
-        var exitItem = new Forms.ToolStripMenuItem("Exit");
+        var exitItem = new Forms.ToolStripMenuItem(Strings.Exit);
         exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
         _contextMenu = new Forms.ContextMenuStrip();
@@ -58,7 +58,7 @@ internal sealed class TrayIconController : IDisposable
         AddIcon();
     }
 
-    internal const string CheckForUpdatesText = "Check for updates";
+    internal static string CheckForUpdatesText => Strings.CheckForUpdates;
 
     public event EventHandler? UpdateRequested;
 
@@ -74,7 +74,7 @@ internal sealed class TrayIconController : IDisposable
         _updateItem.Text = version is null ? CheckForUpdatesText : InstallUpdateText(version);
     }
 
-    internal static string InstallUpdateText(string version) => $"Install update ({version})";
+    internal static string InstallUpdateText(string version) => Strings.InstallUpdate(version);
 
     public void ShowError(string message) => ShowNotification(message, NativeMethods.NIIF_WARNING, clicked: null);
 
@@ -168,7 +168,7 @@ internal sealed class TrayIconController : IDisposable
     private void SetStartupPreference(bool enabled)
     {
         try { _startupRegistration.SetEnabled(enabled); }
-        catch { ShowError("Windows startup could not be updated."); }
+        catch { ShowError(Strings.StartupUpdateFailed); }
         RefreshStartupCheckmark();
     }
 

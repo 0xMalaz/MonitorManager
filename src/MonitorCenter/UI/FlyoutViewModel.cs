@@ -11,7 +11,7 @@ internal sealed class FlyoutViewModel : INotifyPropertyChanged
 {
     private readonly MonitorCoordinator _coordinator;
     private bool _isProfileEditorOpen;
-    private string _newProfileName = "Profile 1";
+    private string _newProfileName = Strings.NumberedProfile(1);
     private string? _profileEditorMessage;
     private string? _profileRenameMessage;
     private string? _displayRenameMessage;
@@ -257,7 +257,7 @@ internal sealed class FlyoutViewModel : INotifyPropertyChanged
     {
         for (var index = 1; index <= MonitorCoordinator.MaxProfileCount; index++)
         {
-            var candidate = $"Profile {index}";
+            var candidate = Strings.NumberedProfile(index);
             if (!TrayProfiles.Any(profile =>
                     string.Equals(profile.Name, candidate, StringComparison.OrdinalIgnoreCase)))
             {
@@ -265,7 +265,7 @@ internal sealed class FlyoutViewModel : INotifyPropertyChanged
             }
         }
 
-        return "Profile";
+        return Strings.Profile;
     }
 
     /// <summary>Keeps one tile per tray profile, reusing tiles so a rename in progress survives the update.</summary>

@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="clr-namespace:MonitorCenter.UI"
+        xmlns:l="clr-namespace:MonitorCenter.Localization"
         Title="MonitorCenter" Width="354" MaxHeight="720" SizeToContent="Height"
         WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False"
         AllowsTransparency="False" Background="Transparent" Topmost="True"
@@ -13,9 +14,9 @@
             <StackPanel>
                 <Grid Margin="2,0,2,11">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <TextBlock VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold" Text="Displays" />
+                    <TextBlock VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold" Text="{x:Static l:Strings.Displays}" />
                     <Button Grid.Column="1" VerticalAlignment="Center" Style="{StaticResource IconButtonStyle}"
-                            ToolTip="Refresh displays" AutomationProperties.Name="Refresh displays" Click="RefreshButton_OnClick">
+                            ToolTip="{x:Static l:Strings.RefreshDisplays}" AutomationProperties.Name="{x:Static l:Strings.RefreshDisplays}" Click="RefreshButton_OnClick">
                         <Viewbox Width="14" Height="14">
                             <Grid Width="16" Height="16">
                                 <Path Data="M 13.4,6 C 12.6,3.5 10.1,2 7.5,2.4 C 4.4,2.9 2.3,5.7 2.6,8.8 C 2.9,11.8 5.5,14 8.5,13.7 C 10.7,13.5 12.5,12.1 13.3,10.2"
@@ -33,11 +34,11 @@
                     <Grid Margin="3,0,3,5">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <TextBlock VerticalAlignment="Center" FontSize="10" FontWeight="SemiBold"
-                                   Foreground="{DynamicResource SecondaryForegroundBrush}" Text="PROFILES" />
+                                   Foreground="{DynamicResource SecondaryForegroundBrush}" Text="{x:Static l:Strings.ProfilesHeader}" />
                         <Button x:Name="NewProfileButton" Grid.Column="1" MinHeight="0" Padding="9,4"
-                                Content="New Profile" Style="{StaticResource FlyoutButtonStyle}"
+                                Content="{x:Static l:Strings.NewProfile}" Style="{StaticResource FlyoutButtonStyle}"
                                 IsEnabled="{Binding CanCreateProfile}" Click="NewProfileButton_OnClick"
-                                AutomationProperties.Name="New Profile" />
+                                AutomationProperties.Name="{x:Static l:Strings.NewProfile}" />
                     </Grid>
                     <ItemsControl x:Name="TrayProfilesList" ItemsSource="{Binding ProfileTiles}"
                                   Visibility="{Binding HasTrayProfiles, Converter={StaticResource BooleanToVisibilityConverter}}">
@@ -45,14 +46,14 @@
                         <ItemsControl.ItemTemplate><DataTemplate>
                             <Grid Margin="2">
                                 <Button x:Name="ApplyProfileButton" Padding="8,6,28,6" Click="ProfileButton_OnClick"
-                                        Style="{StaticResource FlyoutButtonStyle}" ToolTip="Apply profile"
+                                        Style="{StaticResource FlyoutButtonStyle}" ToolTip="{x:Static l:Strings.ApplyProfile}"
                                         AutomationProperties.Name="{Binding Name}">
                                     <TextBlock x:Name="ProfileNameText" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
                                 </Button>
                                 <TextBox x:Name="ProfileRenameTextBox" Margin="9,0,30,0" FontSize="11"
                                          Style="{StaticResource InlineRenameTextBoxStyle}"
                                          Text="{Binding EditName, UpdateSourceTrigger=PropertyChanged}"
-                                         AutomationProperties.Name="Profile name"
+                                         AutomationProperties.Name="{x:Static l:Strings.ProfileName}"
                                          IsVisibleChanged="RenameTextBox_OnIsVisibleChanged"
                                          KeyDown="ProfileRenameTextBox_OnKeyDown" />
                                 <Button x:Name="ProfileSaveButton" HorizontalAlignment="Right" VerticalAlignment="Center"
@@ -67,10 +68,10 @@
                                                      BorderThickness="1" Padding="3" Opacity="1"
                                                      SnapsToDevicePixels="True"
                                                      DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-                                            <MenuItem Header="Rename" CommandParameter="{Binding}"
+                                            <MenuItem Header="{x:Static l:Strings.Rename}" CommandParameter="{Binding}"
                                                       Style="{StaticResource DisplayMenuItemStyle}"
                                                       Click="RenameProfileMenuItem_OnClick" />
-                                            <MenuItem Header="Delete" CommandParameter="{Binding}"
+                                            <MenuItem Header="{x:Static l:Strings.Delete}" CommandParameter="{Binding}"
                                                       Style="{StaticResource DisplayMenuItemStyle}"
                                                       Click="DeleteProfileMenuItem_OnClick" />
                                         </ContextMenu>
@@ -100,21 +101,21 @@
                         <StackPanel>
                             <Grid Margin="0,0,0,7">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="New Profile" />
+                                <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{x:Static l:Strings.NewProfile}" />
                                 <Button Grid.Column="1" Width="26" Height="26" MinHeight="0" Padding="0"
                                         FontFamily="Segoe UI" FontSize="15" Content="&#x00D7;"
-                                        Style="{StaticResource FlyoutButtonStyle}" ToolTip="Cancel"
+                                        Style="{StaticResource FlyoutButtonStyle}" ToolTip="{x:Static l:Strings.Cancel}"
                                         Click="CancelProfileSaveButton_OnClick" />
                             </Grid>
                             <TextBlock Margin="0,0,0,7" FontSize="10" TextWrapping="Wrap"
                                        Foreground="{DynamicResource SecondaryForegroundBrush}"
-                                       Text="Name this profile and save the current display setup." />
+                                       Text="{x:Static l:Strings.NewProfileHint}" />
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <TextBox x:Name="ProfileNameTextBox" Margin="0,0,7,0" MaxLength="40"
                                          Text="{Binding NewProfileName, UpdateSourceTrigger=PropertyChanged}"
-                                         AutomationProperties.Name="New profile name" KeyDown="ProfileNameTextBox_OnKeyDown" />
-                                <Button Grid.Column="1" Padding="12,6" Content="Save" Style="{StaticResource PrimaryButtonStyle}"
+                                         AutomationProperties.Name="{x:Static l:Strings.NewProfileName}" KeyDown="ProfileNameTextBox_OnKeyDown" />
+                                <Button Grid.Column="1" Padding="12,6" Content="{x:Static l:Strings.Save}" Style="{StaticResource PrimaryButtonStyle}"
                                         IsEnabled="{Binding CanSaveNewProfile}" Click="CreateProfileButton_OnClick" />
                             </Grid>
                             <TextBlock Margin="0,8,0,0" FontSize="10" TextWrapping="Wrap"
@@ -127,7 +128,7 @@
                 <StackPanel Margin="0,7,0,12" Visibility="{Binding IsRefreshing, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <ProgressBar Height="3" IsIndeterminate="True" Foreground="{DynamicResource AccentBrush}" />
                     <TextBlock Margin="0,7,0,0" HorizontalAlignment="Center" FontSize="11"
-                               Foreground="{DynamicResource SecondaryForegroundBrush}" Text="Detecting displays..." />
+                               Foreground="{DynamicResource SecondaryForegroundBrush}" Text="{x:Static l:Strings.DetectingDisplays}" />
                 </StackPanel>
 
                 <TextBlock Margin="8,14" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
@@ -164,7 +165,7 @@
                                          FontSize="10" FontWeight="SemiBold"
                                          Style="{StaticResource InlineRenameTextBoxStyle}"
                                          Text="{Binding EditName, UpdateSourceTrigger=PropertyChanged}"
-                                         AutomationProperties.Name="Display name"
+                                         AutomationProperties.Name="{x:Static l:Strings.DisplayName}"
                                          IsVisibleChanged="RenameTextBox_OnIsVisibleChanged"
                                          KeyDown="DisplayRenameTextBox_OnKeyDown" />
                                 <Button x:Name="DisplaySaveButton" HorizontalAlignment="Right" VerticalAlignment="Top"
@@ -180,7 +181,7 @@
                                                      BorderThickness="1" Padding="3" Opacity="1"
                                                      SnapsToDevicePixels="True"
                                                      DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-                                            <MenuItem Header="Rename" CommandParameter="{Binding}"
+                                            <MenuItem Header="{x:Static l:Strings.Rename}" CommandParameter="{Binding}"
                                                       Style="{StaticResource DisplayMenuItemStyle}"
                                                       Click="RenameDisplayMenuItem_OnClick" />
                                         </ContextMenu>
