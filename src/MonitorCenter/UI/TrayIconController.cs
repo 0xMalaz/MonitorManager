@@ -49,10 +49,6 @@ internal sealed class TrayIconController : IDisposable
         _messageSource.AddHook(WindowProcedure);
         _taskbarCreatedMessage = NativeMethods.RegisterWindowMessage("TaskbarCreated");
 
-        var openItem = CreateMenuItem("Open flyout");
-        openItem.Click += async (_, _) => await _flyoutWindow.ShowFlyoutAsync();
-        var refreshItem = CreateMenuItem("Refresh displays");
-        refreshItem.Click += async (_, _) => await _flyoutWindow.RefreshAsync();
         _startupItem = CreateMenuItem("Start with Windows");
         _startupItem.IsCheckable = true;
         _startupItem.Click += (_, _) => SetStartupPreference(_startupItem.IsChecked);
@@ -69,11 +65,9 @@ internal sealed class TrayIconController : IDisposable
             Placement = PlacementMode.MousePoint
         };
         _contextMenu.SetResourceReference(FrameworkElement.StyleProperty, "TrayContextMenuStyle");
-        _contextMenu.Items.Add(openItem);
-        _contextMenu.Items.Add(refreshItem);
+        _contextMenu.Items.Add(updateItem);
         _contextMenu.Items.Add(CreateSeparator());
         _contextMenu.Items.Add(_startupItem);
-        _contextMenu.Items.Add(updateItem);
         _contextMenu.Items.Add(CreateSeparator());
         _contextMenu.Items.Add(exitItem);
 
@@ -105,6 +99,7 @@ internal sealed class TrayIconController : IDisposable
             NativeMethods.NIF_MESSAGE |
             NativeMethods.NIF_ICON |
             NativeMethods.NIF_TIP |
+            NativeMethods.NIF_SHOWTIP |
             NativeMethods.NIF_GUID);
         if (!NativeMethods.ShellNotifyIcon(NativeMethods.NIM_ADD, ref data))
         {
