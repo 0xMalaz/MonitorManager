@@ -12,10 +12,10 @@ internal interface IAppUpdater
     string? PendingVersion { get; }
 
     /// <summary>Returns the newer version that is available, or null when the app is up to date.</summary>
-    Task<string?> CheckForUpdateAsync(CancellationToken cancellationToken);
+    Task<string?> CheckAsync(CancellationToken cancellationToken);
 
-    /// <summary>Downloads the update found by the last <see cref="CheckForUpdateAsync"/>.</summary>
-    Task DownloadUpdateAsync(IProgress<int> progress, CancellationToken cancellationToken);
+    /// <summary>Downloads the update found by the last <see cref="CheckAsync"/>.</summary>
+    Task DownloadAsync(IProgress<int> progress, CancellationToken cancellationToken);
 
     /// <summary>Starts the updater, which installs the pending update once this process exits and then restarts it.</summary>
     void ApplyAfterExit();
@@ -35,14 +35,14 @@ internal sealed class VelopackAppUpdater : IAppUpdater
 
     public string? PendingVersion => CanUpdate ? _manager.UpdatePendingRestart?.Version.ToString() : null;
 
-    public async Task<string?> CheckForUpdateAsync(CancellationToken cancellationToken)
+    public async Task<string?> CheckAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         _available = await _manager.CheckForUpdatesAsync().ConfigureAwait(false);
         return _available?.TargetFullRelease.Version.ToString();
     }
 
-    public Task DownloadUpdateAsync(IProgress<int> progress, CancellationToken cancellationToken)
+    public Task DownloadAsync(IProgress<int> progress, CancellationToken cancellationToken)
     {
         if (_available is null)
         {
@@ -64,6 +64,7 @@ internal sealed class VelopackAppUpdater : IAppUpdater
     {
         var pending = _manager.UpdatePendingRestart ??
                       throw new InvalidOperationException("There is no downloaded update to apply.");
-        _manager.WaitExitThenApplyUpdates(pending, silent: true, restart: true, ["--startup"]);
+        // --startup keeps the restarted app in the tray instead of opening the flyout.
+        _manager.WaitExitThenApplyUpdates(pending, silent: false, restart: true, ["--startup"]);
     }
 }
