@@ -19,6 +19,7 @@ internal sealed class TrayIconController : IDisposable
     private readonly HwndSource _messageSource;
     private readonly IntPtr _icon;
     private readonly Forms.ContextMenuStrip _contextMenu;
+    private readonly Forms.ToolStripMenuItem _updateItem;
     private readonly Forms.ToolStripMenuItem _startupItem;
     private readonly uint _taskbarCreatedMessage;
     private Action? _notificationClicked;
@@ -40,15 +41,15 @@ internal sealed class TrayIconController : IDisposable
         _taskbarCreatedMessage = NativeMethods.RegisterWindowMessage("TaskbarCreated");
 
         // The default Windows Forms menu, without custom colours or renderer, so it looks like a standard Windows menu.
-        var updateItem = new Forms.ToolStripMenuItem("Check for updates");
-        updateItem.Click += (_, _) => UpdateRequested?.Invoke(this, EventArgs.Empty);
+        _updateItem = new Forms.ToolStripMenuItem(CheckForUpdatesText);
+        _updateItem.Click += (_, _) => UpdateRequested?.Invoke(this, EventArgs.Empty);
         _startupItem = new Forms.ToolStripMenuItem("Start with Windows");
         _startupItem.Click += (_, _) => SetStartupPreference(!_startupItem.Checked);
         var exitItem = new Forms.ToolStripMenuItem("Exit");
         exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
         _contextMenu = new Forms.ContextMenuStrip();
-        _contextMenu.Items.Add(updateItem);
+        _contextMenu.Items.Add(_updateItem);
         _contextMenu.Items.Add(new Forms.ToolStripSeparator());
         _contextMenu.Items.Add(_startupItem);
         _contextMenu.Items.Add(new Forms.ToolStripSeparator());
@@ -57,9 +58,23 @@ internal sealed class TrayIconController : IDisposable
         AddIcon();
     }
 
+    internal const string CheckForUpdatesText = "Check for updates";
+
     public event EventHandler? UpdateRequested;
 
+    /// <summary>Raised just before the tray menu is shown.</summary>
+    public event EventHandler? MenuOpening;
+
     public event EventHandler? ExitRequested;
+
+    /// <summary>Shows "Install update" in the menu when <paramref name="version"/> is set, otherwise "Check for updates".</summary>
+    public void SetAvailableUpdate(string? version)
+    {
+        if (_disposed) return;
+        _updateItem.Text = version is null ? CheckForUpdatesText : InstallUpdateText(version);
+    }
+
+    internal static string InstallUpdateText(string version) => $"Install update ({version})";
 
     public void ShowError(string message) => ShowNotification(message, NativeMethods.NIIF_WARNING, clicked: null);
 
@@ -144,6 +159,7 @@ internal sealed class TrayIconController : IDisposable
     private void ShowContextMenu()
     {
         RefreshStartupCheckmark();
+        MenuOpening?.Invoke(this, EventArgs.Empty);
         // As NotifyIcon does: the app must own the foreground so that clicking anywhere else dismisses the menu.
         NativeMethods.SetForegroundWindow(_messageSource.Handle);
         _contextMenu.Show(Forms.Cursor.Position);

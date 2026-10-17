@@ -5,11 +5,15 @@ internal enum UpdateStage { Idle, Checking, Downloading, NoUpdate, Unavailable, 
 internal sealed record UpdateStatus(UpdateStage Stage, string Message, int Progress = 0);
 
 /// <summary>
-/// Checks for, downloads and installs updates when the user clicks "Check for updates" in the tray menu.
-/// MonitorCenter never does any of this on its own. Status changes are raised on the caller's synchronization context.
+/// Downloads and installs updates when the user clicks the update item in the tray menu, and checks quietly in the
+/// background so that item can say when an update is available. Background checks never download or install
+/// anything. Status changes are raised on the caller's synchronization context.
 /// </summary>
-internal sealed class UpdateCoordinator(IAppUpdater updater, Action shutdown) : IDisposable
+internal sealed class UpdateCoordinator(IAppUpdater updater, Action shutdown, TimeProvider? clock = null) : IDisposable
 {
+    /// <summary>The shortest time between background checks, which keeps them well inside GitHub's rate limit.</summary>
+    internal static readonly TimeSpan MinimumCheckInterval = TimeSpan.FromMinutes(30);
+
     internal const string UnavailableMessage =
         "Updates are unavailable in development or unpackaged builds. Install MonitorCenter-Setup.exe first.";
     internal const string CheckingMessage = "Checking for updates…";
@@ -17,16 +21,59 @@ internal sealed class UpdateCoordinator(IAppUpdater updater, Action shutdown) : 
     internal const string RestartingMessage = "Restarting to apply the update…";
 
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly TimeProvider _clock = clock ?? TimeProvider.System;
+    private DateTimeOffset? _lastCheck;
+    private Task? _backgroundCheck;
     private int _running;
     private bool _disposed;
 
     public UpdateStatus Status { get; private set; } = new(UpdateStage.Idle, "Check for updates");
 
+    /// <summary>The newer version found by the last check, or null when none is known.</summary>
+    public string? AvailableVersion { get; private set; }
+
     public event Action<UpdateStatus>? StatusChanged;
 
+    public event Action<string?>? AvailableVersionChanged;
+
     /// <summary>
-    /// Checks for an update and, if there is one, downloads it and restarts into it. Calls made while a run is in
-    /// progress return straight away.
+    /// Checks whether an update is available without downloading it. Does nothing when the app cannot update, an
+    /// update is already known, a user-requested run is in progress, or the last check was less than
+    /// <see cref="MinimumCheckInterval"/> ago. Failures are ignored and keep the last known result.
+    /// </summary>
+    public Task CheckInBackgroundAsync()
+    {
+        if (_disposed || _running != 0 || _backgroundCheck is { IsCompleted: false } || !updater.CanUpdate) return Task.CompletedTask;
+        if (updater.PendingVersion is { } pending)
+        {
+            SetAvailableVersion(pending);
+            return Task.CompletedTask;
+        }
+        if (AvailableVersion is not null) return Task.CompletedTask;
+        if (_lastCheck is { } last && _clock.GetUtcNow() - last < MinimumCheckInterval) return Task.CompletedTask;
+
+        _backgroundCheck = CheckAsync();
+        return _backgroundCheck;
+
+        async Task CheckAsync()
+        {
+            var token = _lifetime.Token;
+            try
+            {
+                _lastCheck = _clock.GetUtcNow();
+                var version = await updater.CheckAsync(token);
+                if (!token.IsCancellationRequested) SetAvailableVersion(version);
+            }
+            catch
+            {
+                // The user is not waiting on a background check; the next one or a click will try again.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Checks for an update unless a background check already found one, then downloads it and restarts into it.
+    /// Calls made while a run is in progress return straight away.
     /// </summary>
     public async Task RunAsync()
     {
@@ -35,6 +82,13 @@ internal sealed class UpdateCoordinator(IAppUpdater updater, Action shutdown) : 
         var token = _lifetime.Token;
         try
         {
+            if (_backgroundCheck is { IsCompleted: false } backgroundCheck)
+            {
+                Report(new(UpdateStage.Checking, CheckingMessage));
+                await backgroundCheck;
+                token.ThrowIfCancellationRequested();
+            }
+
             if (!updater.CanUpdate)
             {
                 Report(new(UpdateStage.Unavailable, UnavailableMessage));
@@ -43,9 +97,17 @@ internal sealed class UpdateCoordinator(IAppUpdater updater, Action shutdown) : 
 
             if (updater.PendingVersion is null)
             {
-                Report(new(UpdateStage.Checking, CheckingMessage));
-                var version = await updater.CheckAsync(token);
-                token.ThrowIfCancellationRequested();
+                // An update found by a background check is downloaded straight away instead of checking again.
+                var version = AvailableVersion;
+                if (version is null)
+                {
+                    Report(new(UpdateStage.Checking, CheckingMessage));
+                    _lastCheck = _clock.GetUtcNow();
+                    version = await updater.CheckAsync(token);
+                    token.ThrowIfCancellationRequested();
+                    SetAvailableVersion(version);
+                }
+
                 if (version is null)
                 {
                     Report(new(UpdateStage.NoUpdate, UpToDateMessage));
@@ -77,12 +139,19 @@ internal sealed class UpdateCoordinator(IAppUpdater updater, Action shutdown) : 
         }
         catch (Exception exception)
         {
-            Report(new(UpdateStage.Failed, $"Update failed: {exception.Message}\nChoose Check for updates to retry."));
+            Report(new(UpdateStage.Failed, $"Update failed: {exception.Message}\nTry again from the tray menu."));
         }
         finally
         {
             if (!restarting) Interlocked.Exchange(ref _running, 0);
         }
+    }
+
+    private void SetAvailableVersion(string? version)
+    {
+        if (_disposed || version == AvailableVersion) return;
+        AvailableVersion = version;
+        AvailableVersionChanged?.Invoke(version);
     }
 
     private void Report(UpdateStatus status)

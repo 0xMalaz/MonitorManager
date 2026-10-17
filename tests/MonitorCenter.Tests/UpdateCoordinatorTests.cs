@@ -81,7 +81,7 @@ public sealed class UpdateCoordinatorTests
     }
 
     [TestMethod]
-    public async Task Coordinator_NeverChecksUntilTheUserAsks()
+    public async Task Coordinator_NeverChecksOnItsOwn()
     {
         var updater = new FakeUpdater { AvailableVersion = "1.1.0" };
         using var coordinator = new UpdateCoordinator(updater, () => { });
@@ -140,6 +140,168 @@ public sealed class UpdateCoordinatorTests
         Assert.AreEqual(0, updater.DownloadCount);
     }
 
+    [TestMethod]
+    public async Task BackgroundCheck_FindsUpdateWithoutDownloadingIt()
+    {
+        var updater = new FakeUpdater { AvailableVersion = "1.1.0" };
+        using var coordinator = new UpdateCoordinator(updater, () => { });
+        var found = new List<string?>();
+        coordinator.AvailableVersionChanged += found.Add;
+
+        await coordinator.CheckInBackgroundAsync();
+
+        Assert.AreEqual("1.1.0", coordinator.AvailableVersion);
+        CollectionAssert.AreEqual(new[] { "1.1.0" }, found);
+        Assert.AreEqual(0, updater.DownloadCount);
+        Assert.AreEqual(0, updater.ApplyCount);
+        Assert.AreEqual(UpdateStage.Idle, coordinator.Status.Stage);
+    }
+
+    [TestMethod]
+    public async Task BackgroundCheck_IsThrottled()
+    {
+        var clock = new ManualClock();
+        var updater = new FakeUpdater();
+        using var coordinator = new UpdateCoordinator(updater, () => { }, clock);
+
+        await coordinator.CheckInBackgroundAsync();
+        clock.Advance(UpdateCoordinator.MinimumCheckInterval - TimeSpan.FromSeconds(1));
+        await coordinator.CheckInBackgroundAsync();
+        Assert.AreEqual(1, updater.CheckCount);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await coordinator.CheckInBackgroundAsync();
+        Assert.AreEqual(2, updater.CheckCount);
+    }
+
+    [TestMethod]
+    public async Task BackgroundCheck_AfterUserCheck_IsThrottled()
+    {
+        var updater = new FakeUpdater();
+        using var coordinator = new UpdateCoordinator(updater, () => { }, new ManualClock());
+
+        await coordinator.RunAsync();
+        await coordinator.CheckInBackgroundAsync();
+
+        Assert.AreEqual(1, updater.CheckCount);
+    }
+
+    [TestMethod]
+    public async Task BackgroundCheck_StopsOnceUpdateIsKnown()
+    {
+        var clock = new ManualClock();
+        var updater = new FakeUpdater { AvailableVersion = "1.1.0" };
+        using var coordinator = new UpdateCoordinator(updater, () => { }, clock);
+
+        await coordinator.CheckInBackgroundAsync();
+        clock.Advance(TimeSpan.FromHours(8));
+        await coordinator.CheckInBackgroundAsync();
+
+        Assert.AreEqual(1, updater.CheckCount);
+    }
+
+    [TestMethod]
+    public async Task BackgroundCheck_WhenFailing_StaysQuietAndKeepsState()
+    {
+        var updater = new FakeUpdater { CheckFailure = new HttpRequestException("offline") };
+        using var coordinator = new UpdateCoordinator(updater, () => { });
+        var statuses = 0;
+        coordinator.StatusChanged += _ => statuses++;
+
+        await coordinator.CheckInBackgroundAsync();
+
+        Assert.AreEqual(1, updater.CheckCount);
+        Assert.IsNull(coordinator.AvailableVersion);
+        Assert.AreEqual(0, statuses);
+        Assert.AreEqual(UpdateStage.Idle, coordinator.Status.Stage);
+    }
+
+    [TestMethod]
+    public async Task BackgroundCheck_WhenNotInstalled_DoesNotContactGitHub()
+    {
+        var updater = new FakeUpdater { CanUpdate = false, AvailableVersion = "1.1.0" };
+        using var coordinator = new UpdateCoordinator(updater, () => { });
+
+        await coordinator.CheckInBackgroundAsync();
+
+        Assert.AreEqual(0, updater.CheckCount);
+        Assert.IsNull(coordinator.AvailableVersion);
+    }
+
+    [TestMethod]
+    public async Task Run_AfterBackgroundCheckFoundUpdate_DownloadsWithoutCheckingAgain()
+    {
+        var updater = new FakeUpdater { AvailableVersion = "1.1.0" };
+        var shutdowns = 0;
+        using var coordinator = new UpdateCoordinator(updater, () => shutdowns++);
+        await coordinator.CheckInBackgroundAsync();
+        var stages = RecordStages(coordinator);
+
+        await coordinator.RunAsync();
+
+        Assert.AreEqual(1, updater.CheckCount);
+        Assert.AreEqual(UpdateStage.Downloading, stages[0]);
+        Assert.AreEqual(1, updater.DownloadCount);
+        Assert.AreEqual(1, shutdowns);
+    }
+
+    [TestMethod]
+    public async Task Run_WhileBackgroundCheckIsRunning_WaitsForItInsteadOfCheckingTwice()
+    {
+        var release = new TaskCompletionSource();
+        var updater = new FakeUpdater { AvailableVersion = "1.1.0", CheckGate = release.Task };
+        using var coordinator = new UpdateCoordinator(updater, () => { });
+
+        var background = coordinator.CheckInBackgroundAsync();
+        var run = coordinator.RunAsync();
+        Assert.AreEqual(UpdateStage.Checking, coordinator.Status.Stage);
+        release.SetResult();
+        await Task.WhenAll(background, run);
+
+        Assert.AreEqual(1, updater.CheckCount);
+        Assert.AreEqual(1, updater.DownloadCount);
+        Assert.AreEqual(UpdateStage.Restarting, coordinator.Status.Stage);
+    }
+
+    [TestMethod]
+    public async Task BackgroundCheck_WhileUserRunIsInProgress_IsSkipped()
+    {
+        var release = new TaskCompletionSource();
+        var updater = new FakeUpdater { CheckGate = release.Task };
+        using var coordinator = new UpdateCoordinator(updater, () => { });
+
+        var run = coordinator.RunAsync();
+        await coordinator.CheckInBackgroundAsync();
+        release.SetResult();
+        await run;
+
+        Assert.AreEqual(1, updater.CheckCount);
+    }
+
+    [TestMethod]
+    public async Task Run_AfterFailedDownload_RetriesWithoutCheckingAgain()
+    {
+        var clock = new ManualClock();
+        var updater = new FakeUpdater { AvailableVersion = "1.1.0", DownloadFailure = new IOException("disk full") };
+        using var coordinator = new UpdateCoordinator(updater, () => { }, clock);
+
+        await coordinator.RunAsync();
+        Assert.AreEqual(UpdateStage.Failed, coordinator.Status.Stage);
+        Assert.AreEqual("1.1.0", coordinator.AvailableVersion);
+
+        updater.DownloadFailure = null;
+        await coordinator.RunAsync();
+        Assert.AreEqual(UpdateStage.Restarting, coordinator.Status.Stage);
+        Assert.AreEqual(1, updater.CheckCount);
+    }
+
+    private sealed class ManualClock : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        public void Advance(TimeSpan by) => _now += by;
+        public override DateTimeOffset GetUtcNow() => _now;
+    }
+
     private static List<UpdateStage> RecordStages(UpdateCoordinator coordinator)
     {
         var stages = new List<UpdateStage>();
@@ -156,6 +318,7 @@ public sealed class UpdateCoordinatorTests
         public Task CheckGate { get; set; } = Task.CompletedTask;
         public int[] ProgressSteps { get; set; } = [];
         public Task DownloadGate { get; set; } = Task.CompletedTask;
+        public Exception? DownloadFailure { get; set; }
         public int CheckCount { get; private set; }
         public int DownloadCount { get; private set; }
         public int ApplyCount { get; private set; }
@@ -173,6 +336,7 @@ public sealed class UpdateCoordinatorTests
             DownloadCount++;
             foreach (var percent in ProgressSteps) progress.Report(percent);
             await DownloadGate;
+            if (DownloadFailure is not null) throw DownloadFailure;
             PendingVersion = AvailableVersion;
         }
 
