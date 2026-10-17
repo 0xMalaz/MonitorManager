@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using MonitorCenter.Models;
 using MonitorCenter.Services;
+using MonitorCenter.UI;
 using System.Windows.Threading;
 
 namespace MonitorCenter.Tests;
@@ -48,5 +49,22 @@ public sealed class ProfileTrayTests
 
         Assert.IsFalse(coordinator.CanCreateProfile);
         Assert.AreEqual(MonitorCoordinator.MaxProfileCount, coordinator.TrayProfiles.Count());
+    }
+
+    [TestMethod]
+    public void ProfileTile_ShowsEachSavedDisplayLevelInSavedOrder()
+    {
+        var profile = new BrightnessProfile
+        {
+            Name = "Evening",
+            MonitorSettings =
+            [
+                new ProfileMonitorSetting { Brightness = 20 },
+                new ProfileMonitorSetting { Brightness = null },
+                new ProfileMonitorSetting { Brightness = 80 }
+            ]
+        };
+
+        CollectionAssert.AreEqual(new int?[] { 20, null, 80 }, new ProfileTileViewModel(profile).Levels.ToArray());
     }
 }

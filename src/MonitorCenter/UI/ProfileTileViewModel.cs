@@ -8,17 +8,38 @@ namespace MonitorCenter.UI;
 internal sealed class ProfileTileViewModel : INotifyPropertyChanged
 {
     private bool _isRenaming;
+    private bool _isActive;
     private string _editName = string.Empty;
 
     public ProfileTileViewModel(BrightnessProfile profile)
     {
         Profile = profile;
+        Levels = profile.MonitorSettings.Select(setting => setting.Brightness).ToArray();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public BrightnessProfile Profile { get; }
     public string Name => Profile.Name;
+
+    /// <summary>The brightness the profile sets on each display, in the order the displays were saved.</summary>
+    public IReadOnlyList<int?> Levels { get; }
+
+    /// <summary>True while the displays are still set the way this profile set them.</summary>
+    public bool IsActive
+    {
+        get => _isActive;
+        set
+        {
+            if (_isActive == value)
+            {
+                return;
+            }
+
+            _isActive = value;
+            OnPropertyChanged();
+        }
+    }
 
     public bool IsRenaming
     {

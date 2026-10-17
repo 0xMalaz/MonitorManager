@@ -139,8 +139,9 @@ internal sealed class FlyoutViewModel : INotifyPropertyChanged
     public Task RefreshAsync(bool reprobeKnownDisplays = true, CancellationToken cancellationToken = default) =>
         _coordinator.RefreshAsync(reprobeKnownDisplays, cancellationToken);
 
-    public Task ApplyProfileAsync(BrightnessProfile profile, CancellationToken cancellationToken = default) =>
-        _coordinator.ApplyProfileAsync(profile, cancellationToken);
+    /// <summary>Applies the tile's profile, unless it is the active one: the displays are already set that way.</summary>
+    public Task ApplyProfileAsync(ProfileTileViewModel tile, CancellationToken cancellationToken = default) =>
+        tile.IsActive ? Task.CompletedTask : _coordinator.ApplyProfileAsync(tile.Profile, cancellationToken);
 
     public void OpenProfileEditor()
     {
@@ -309,6 +310,16 @@ internal sealed class FlyoutViewModel : INotifyPropertyChanged
         {
             ProfileRenameMessage = null;
         }
+
+        SyncActiveProfile();
+    }
+
+    private void SyncActiveProfile()
+    {
+        foreach (var tile in ProfileTiles)
+        {
+            tile.IsActive = tile.Profile.Id == _coordinator.ActiveProfileId;
+        }
     }
 
     private void OnCoordinatorPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -329,6 +340,11 @@ internal sealed class FlyoutViewModel : INotifyPropertyChanged
         if (property is nameof(TrayProfiles))
         {
             SyncProfileTiles();
+        }
+
+        if (property is nameof(MonitorCoordinator.ActiveProfileId))
+        {
+            SyncActiveProfile();
         }
 
         if (property is nameof(CanCreateProfile) or nameof(CanSaveCurrentSetup))

@@ -35,9 +35,9 @@ If you still use 1.0.0 (the zip version), exit it and run the installer. Your se
 ## Usage
 
 - Click the tray icon to open the flyout.
-- Click or drag inside a display's square to set brightness. Bottom is 0%, top is 100%. The mouse wheel and arrow keys work too.
-- Use a display's **⋮** button to rename it.
-- **New Profile** saves the current brightness of every display. Click a profile to apply it.
+- Click or drag on a display's screen to set brightness. Bottom is 0%, top is 100%. The mouse wheel and arrow keys work too.
+- Use the **⋯** button next to a display's name to rename it.
+- **New Profile** saves the current brightness of every display. Click a profile to apply it; its bars show the brightness it sets on each display.
 - Right-click the tray icon to check for updates, toggle **Start with Windows**, or exit.
 
 ## A display shows as unavailable

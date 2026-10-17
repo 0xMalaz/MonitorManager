@@ -7,65 +7,147 @@
         WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False"
         AllowsTransparency="False" Background="Transparent" Topmost="True"
         TextOptions.TextFormattingMode="Display" UseLayoutRounding="True" SnapsToDevicePixels="True">
-    <Border x:Name="RootBorder" Padding="15,13,15,12"
-            Background="{DynamicResource OverlayBackgroundBrush}">
-        <ScrollViewer MaxHeight="680" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-            <StackPanel>
-                <Grid Margin="2,0,2,11">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <TextBlock VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold" Text="{x:Static l:Strings.Displays}" />
-                    <Button Grid.Column="1" VerticalAlignment="Center" Style="{StaticResource IconButtonStyle}"
-                            ToolTip="{x:Static l:Strings.RefreshDisplays}" AutomationProperties.Name="{x:Static l:Strings.RefreshDisplays}" Click="RefreshButton_OnClick">
-                        <Viewbox Width="14" Height="14">
-                            <Grid Width="16" Height="16">
-                                <Path Data="M 13.4,6 C 12.6,3.5 10.1,2 7.5,2.4 C 4.4,2.9 2.3,5.7 2.6,8.8 C 2.9,11.8 5.5,14 8.5,13.7 C 10.7,13.5 12.5,12.1 13.3,10.2"
-                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                      StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Fill="Transparent" />
-                                <Path Data="M 10.6,4.4 L 13.6,6.1 L 14.2,2.7"
-                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                      StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Fill="Transparent" />
-                            </Grid>
-                        </Viewbox>
-                    </Button>
-                </Grid>
+    <Border x:Name="RootBorder" Background="{DynamicResource OverlayBackgroundBrush}">
+        <DockPanel>
+            <Grid DockPanel.Dock="Top" Height="41">
+                <TextBlock Margin="17,2,0,0" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" Text="{x:Static l:Strings.Displays}" />
+                <Button Width="30" Height="30" Margin="0,1,6,0" HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Style="{StaticResource FlyoutIconButtonStyle}"
+                        ToolTip="{x:Static l:Strings.RefreshDisplays}" AutomationProperties.Name="{x:Static l:Strings.RefreshDisplays}" Click="RefreshButton_OnClick">
+                    <Viewbox Width="15" Height="15">
+                        <Grid Width="16" Height="16">
+                            <Path Data="M 13.4,6 C 12.6,3.5 10.1,2 7.5,2.4 C 4.4,2.9 2.3,5.7 2.6,8.8 C 2.9,11.8 5.5,14 8.5,13.7 C 10.7,13.5 12.5,12.1 13.3,10.2"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                  StrokeThickness="1.45" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Fill="Transparent" />
+                            <Path Data="M 10.6,4.4 L 13.6,6.1 L 14.2,2.7"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                  StrokeThickness="1.45" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Fill="Transparent" />
+                        </Grid>
+                    </Viewbox>
+                </Button>
+            </Grid>
+            <Border DockPanel.Dock="Top" Height="1" Background="{DynamicResource FlyoutDividerBrush}" />
 
-                <StackPanel Margin="0,0,0,10">
-                    <Grid Margin="3,0,3,5">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <TextBlock VerticalAlignment="Center" FontSize="10" FontWeight="SemiBold"
-                                   Foreground="{DynamicResource SecondaryForegroundBrush}" Text="{x:Static l:Strings.ProfilesHeader}" />
-                        <Button x:Name="NewProfileButton" Grid.Column="1" MinHeight="0" Padding="9,4"
-                                Content="{x:Static l:Strings.NewProfile}" Style="{StaticResource FlyoutButtonStyle}"
+            <ScrollViewer MaxHeight="678" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="17,16,17,17">
+                    <StackPanel Margin="0,0,0,14" Visibility="{Binding IsRefreshing, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <ProgressBar Height="3" IsIndeterminate="True" Foreground="{DynamicResource AccentBrush}" />
+                        <TextBlock Margin="0,7,0,0" HorizontalAlignment="Center" FontSize="11"
+                                   Foreground="{DynamicResource SecondaryForegroundBrush}" Text="{x:Static l:Strings.DetectingDisplays}" />
+                    </StackPanel>
+
+                    <TextBlock Margin="8,0,8,14" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                               Foreground="{DynamicResource SecondaryForegroundBrush}" FontSize="12" Text="{Binding EmptyMessage}"
+                               Visibility="{Binding ShowEmptyState, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                    <ItemsControl Margin="-5,0" ItemsSource="{Binding Monitors}">
+                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Width="100" Margin="5,0,5,12">
+                                    <Grid Height="82" ToolTip="{Binding ToolTip}">
+                                        <ui:BrightnessBox IsEnabled="{Binding IsControllable}"
+                                                          Value="{Binding CurrentPercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          ValueCommitRequested="BrightnessBox_OnValueCommitRequested"
+                                                          AutomationProperties.Name="{Binding DisplayName}" />
+                                        <Border MaxWidth="86" Height="24" Padding="7,0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                CornerRadius="10" Background="{DynamicResource MonitorLabelBackgroundBrush}" IsHitTestVisible="False">
+                                            <TextBlock x:Name="BrightnessLabel" VerticalAlignment="Center" FontSize="16" FontWeight="Bold"
+                                                       Foreground="{DynamicResource MonitorLabelForegroundBrush}"
+                                                       Text="{Binding BrightnessText}" TextTrimming="CharacterEllipsis" />
+                                        </Border>
+                                    </Grid>
+                                    <Rectangle Width="10" Height="7" Fill="{DynamicResource MonitorFrameBrush}" />
+                                    <Border Width="44" Height="4" CornerRadius="2" Background="{DynamicResource MonitorFrameBrush}" />
+                                    <Grid Height="22" Margin="0,8,0,0">
+                                        <TextBlock x:Name="DisplayNameText" Margin="18,0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   FontSize="12" FontWeight="Bold" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
+                                        <TextBox x:Name="DisplayRenameTextBox" Margin="2,0,24,0" FontSize="12" FontWeight="SemiBold"
+                                                 TextAlignment="Center" Style="{StaticResource InlineRenameTextBoxStyle}"
+                                                 Text="{Binding EditName, UpdateSourceTrigger=PropertyChanged}"
+                                                 AutomationProperties.Name="{x:Static l:Strings.DisplayName}"
+                                                 IsVisibleChanged="RenameTextBox_OnIsVisibleChanged"
+                                                 KeyDown="DisplayRenameTextBox_OnKeyDown" />
+                                        <Button x:Name="DisplaySaveButton" Margin="0,0,1,0" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                Style="{StaticResource TileSaveButtonStyle}"
+                                                IsEnabled="{Binding CanSaveName}" Click="DisplaySaveButton_OnClick" />
+                                        <Button x:Name="DisplayMenuButton" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                Style="{StaticResource TileMenuButtonStyle}" Click="TileMenuButton_OnClick">
+                                            <Button.ContextMenu>
+                                                <ContextMenu Style="{StaticResource TileContextMenuStyle}" Closed="TileContextMenu_OnClosed"
+                                                             DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                                    <MenuItem Header="{x:Static l:Strings.Rename}" CommandParameter="{Binding}"
+                                                              Style="{StaticResource DisplayMenuItemStyle}"
+                                                              Click="RenameDisplayMenuItem_OnClick" />
+                                                </ContextMenu>
+                                            </Button.ContextMenu>
+                                        </Button>
+                                    </Grid>
+                                </StackPanel>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding HasCompactStatus}" Value="True">
+                                        <Setter TargetName="BrightnessLabel" Property="Text" Value="{Binding CompactStatusText}" />
+                                        <Setter TargetName="BrightnessLabel" Property="FontSize" Value="11" />
+                                        <Setter TargetName="BrightnessLabel" Property="FontWeight" Value="SemiBold" />
+                                        <Setter TargetName="BrightnessLabel" Property="Foreground" Value="{DynamicResource MonitorStatusForegroundBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsRenaming}" Value="True">
+                                        <Setter TargetName="DisplayNameText" Property="Visibility" Value="Hidden" />
+                                        <Setter TargetName="DisplayRenameTextBox" Property="Visibility" Value="Visible" />
+                                        <Setter TargetName="DisplayMenuButton" Property="Visibility" Value="Collapsed" />
+                                        <Setter TargetName="DisplaySaveButton" Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Margin="0,-4,0,12" FontSize="11" TextWrapping="Wrap"
+                               Foreground="{DynamicResource ErrorBrush}" Text="{Binding DisplayRenameMessage}"
+                               Visibility="{Binding HasDisplayRenameMessage, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                    <Grid Height="26" Margin="0,11,0,0">
+                        <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource FlyoutSectionHeaderBrush}" Text="{x:Static l:Strings.ProfilesHeader}" />
+                        <Button x:Name="NewProfileButton" HorizontalAlignment="Right"
+                                Content="{x:Static l:Strings.NewProfile}" Style="{StaticResource OutlineButtonStyle}"
                                 IsEnabled="{Binding CanCreateProfile}" Click="NewProfileButton_OnClick"
                                 AutomationProperties.Name="{x:Static l:Strings.NewProfile}" />
                     </Grid>
-                    <ItemsControl x:Name="TrayProfilesList" ItemsSource="{Binding ProfileTiles}"
+
+                    <ItemsControl x:Name="TrayProfilesList" Margin="-3,8,-3,0" ItemsSource="{Binding ProfileTiles}"
                                   Visibility="{Binding HasTrayProfiles, Converter={StaticResource BooleanToVisibilityConverter}}">
                         <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Rows="1" Columns="3" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate><DataTemplate>
-                            <Grid Margin="2">
-                                <Button x:Name="ApplyProfileButton" Padding="8,6,28,6" Click="ProfileButton_OnClick"
-                                        Style="{StaticResource FlyoutButtonStyle}" ToolTip="{x:Static l:Strings.ApplyProfile}"
+                            <Grid Height="60" Margin="3,0">
+                                <Button x:Name="ApplyProfileButton" Click="ProfileButton_OnClick"
+                                        Style="{StaticResource ProfileCardButtonStyle}" ToolTip="{x:Static l:Strings.ApplyProfile}"
                                         AutomationProperties.Name="{Binding Name}">
-                                    <TextBlock x:Name="ProfileNameText" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                    <Grid>
+                                        <TextBlock x:Name="ProfileNameText" Margin="10,9,26,0" VerticalAlignment="Top" FontSize="13"
+                                                   Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                        <ItemsControl Height="16" Margin="8.5,0,8.5,8" VerticalAlignment="Bottom"
+                                                      ItemsSource="{Binding Levels}" Focusable="False" IsHitTestVisible="False">
+                                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate><DataTemplate>
+                                                <ui:ProfileLevelBar Margin="1.5,0" Level="{Binding}" />
+                                            </DataTemplate></ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Grid>
                                 </Button>
-                                <TextBox x:Name="ProfileRenameTextBox" Margin="9,0,30,0" FontSize="11"
+                                <TextBox x:Name="ProfileRenameTextBox" Margin="9,10,30,0" VerticalAlignment="Top" FontSize="13"
                                          Style="{StaticResource InlineRenameTextBoxStyle}"
                                          Text="{Binding EditName, UpdateSourceTrigger=PropertyChanged}"
                                          AutomationProperties.Name="{x:Static l:Strings.ProfileName}"
                                          IsVisibleChanged="RenameTextBox_OnIsVisibleChanged"
                                          KeyDown="ProfileRenameTextBox_OnKeyDown" />
-                                <Button x:Name="ProfileSaveButton" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                        Margin="0,0,5,0" Style="{StaticResource TileSaveButtonStyle}"
+                                <Button x:Name="ProfileSaveButton" Margin="0,8,4,0" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                        Style="{StaticResource TileSaveButtonStyle}"
                                         IsEnabled="{Binding CanSaveName}" Click="ProfileSaveButton_OnClick" />
-                                <Button x:Name="ProfileMenuButton" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                        Margin="0,0,5,0" Style="{StaticResource TileMenuButtonStyle}" Click="TileMenuButton_OnClick">
+                                <Button x:Name="ProfileMenuButton" Margin="0,7,3,0" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                        Style="{StaticResource TileMenuButtonStyle}" Click="TileMenuButton_OnClick">
                                     <Button.ContextMenu>
-                                        <ContextMenu Placement="Bottom" Closed="TileContextMenu_OnClosed"
-                                                     Background="{DynamicResource SurfaceBrush}"
-                                                     BorderBrush="{DynamicResource StrongBorderBrush}"
-                                                     BorderThickness="1" Padding="3" Opacity="1"
-                                                     SnapsToDevicePixels="True"
+                                        <ContextMenu Style="{StaticResource TileContextMenuStyle}" Closed="TileContextMenu_OnClosed"
                                                      DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                                             <MenuItem Header="{x:Static l:Strings.Rename}" CommandParameter="{Binding}"
                                                       Style="{StaticResource DisplayMenuItemStyle}"
@@ -76,8 +158,18 @@
                                         </ContextMenu>
                                     </Button.ContextMenu>
                                 </Button>
+                                <!-- The active profile: an accent outline and a faint accent tint over the whole tile. -->
+                                <Border x:Name="ActiveProfileOverlay" CornerRadius="6" BorderThickness="1" IsHitTestVisible="False"
+                                        Background="{DynamicResource ProfileCardActiveTintBrush}"
+                                        BorderBrush="{DynamicResource ProfileCardActiveBorderBrush}" Visibility="Collapsed" />
                             </Grid>
                             <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                    <Setter TargetName="ActiveProfileOverlay" Property="Visibility" Value="Visible" />
+                                    <!-- Clicking the active profile does nothing, so it doesn't react like a button. -->
+                                    <Setter TargetName="ApplyProfileButton" Property="IsHitTestVisible" Value="False" />
+                                    <Setter TargetName="ApplyProfileButton" Property="Focusable" Value="False" />
+                                </DataTrigger>
                                 <DataTrigger Binding="{Binding IsRenaming}" Value="True">
                                     <Setter TargetName="ApplyProfileButton" Property="IsHitTestVisible" Value="False" />
                                     <Setter TargetName="ApplyProfileButton" Property="Focusable" Value="False" />
@@ -89,120 +181,45 @@
                             </DataTemplate.Triggers>
                         </DataTemplate></ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <TextBlock Margin="3,6,3,0" FontSize="10" TextWrapping="Wrap"
+                    <TextBlock Margin="0,6,0,0" FontSize="11" TextWrapping="Wrap"
                                Foreground="{DynamicResource ErrorBrush}" Text="{Binding ProfileRenameMessage}"
                                Visibility="{Binding HasProfileRenameMessage, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
-                    <Border x:Name="NewProfilePanel" Margin="2,7,2,0" Padding="11" CornerRadius="8"
-                            Background="{DynamicResource OverlaySurfaceBrush}"
+                    <Border x:Name="NewProfilePanel" Margin="0,8,0,0" Padding="11" CornerRadius="6"
+                            Background="{DynamicResource ProfileCardBrush}"
+                            BorderBrush="{DynamicResource ProfileCardBorderBrush}" BorderThickness="1"
                             Visibility="{Binding IsProfileEditorOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
                         <StackPanel>
                             <Grid Margin="0,0,0,7">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{x:Static l:Strings.NewProfile}" />
-                                <Button Grid.Column="1" Width="26" Height="26" MinHeight="0" Padding="0"
+                                <TextBlock VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold" Text="{x:Static l:Strings.NewProfile}" />
+                                <Button Grid.Column="1" Width="24" Height="24"
                                         FontFamily="Segoe UI" FontSize="15" Content="&#x00D7;"
-                                        Style="{StaticResource FlyoutButtonStyle}" ToolTip="{x:Static l:Strings.Cancel}"
+                                        Style="{StaticResource FlyoutIconButtonStyle}" ToolTip="{x:Static l:Strings.Cancel}"
+                                        AutomationProperties.Name="{x:Static l:Strings.Cancel}"
                                         Click="CancelProfileSaveButton_OnClick" />
                             </Grid>
-                            <TextBlock Margin="0,0,0,7" FontSize="10" TextWrapping="Wrap"
-                                       Foreground="{DynamicResource SecondaryForegroundBrush}"
+                            <TextBlock Margin="0,0,0,8" FontSize="11" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource FlyoutSectionHeaderBrush}"
                                        Text="{x:Static l:Strings.NewProfileHint}" />
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBox x:Name="ProfileNameTextBox" Margin="0,0,7,0" MaxLength="40"
+                                <TextBox x:Name="ProfileNameTextBox" Height="30" MinHeight="0" Margin="0,0,7,0" Padding="7,0" MaxLength="40"
+                                         VerticalContentAlignment="Center" FontSize="12"
+                                         Background="{DynamicResource OverlayBackgroundBrush}"
+                                         BorderBrush="{DynamicResource OutlineButtonBorderBrush}"
                                          Text="{Binding NewProfileName, UpdateSourceTrigger=PropertyChanged}"
                                          AutomationProperties.Name="{x:Static l:Strings.NewProfileName}" KeyDown="ProfileNameTextBox_OnKeyDown" />
-                                <Button Grid.Column="1" Padding="12,6" Content="{x:Static l:Strings.Save}" Style="{StaticResource PrimaryButtonStyle}"
+                                <Button Grid.Column="1" Height="30" MinHeight="0" Padding="14,0" Content="{x:Static l:Strings.Save}" Style="{StaticResource PrimaryButtonStyle}"
                                         IsEnabled="{Binding CanSaveNewProfile}" Click="CreateProfileButton_OnClick" />
                             </Grid>
-                            <TextBlock Margin="0,8,0,0" FontSize="10" TextWrapping="Wrap"
+                            <TextBlock Margin="0,8,0,0" FontSize="11" TextWrapping="Wrap"
                                        Foreground="{DynamicResource ErrorBrush}" Text="{Binding ProfileEditorMessage}"
                                        Visibility="{Binding HasProfileEditorMessage, Converter={StaticResource BooleanToVisibilityConverter}}" />
                         </StackPanel>
                     </Border>
                 </StackPanel>
-
-                <StackPanel Margin="0,7,0,12" Visibility="{Binding IsRefreshing, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <ProgressBar Height="3" IsIndeterminate="True" Foreground="{DynamicResource AccentBrush}" />
-                    <TextBlock Margin="0,7,0,0" HorizontalAlignment="Center" FontSize="11"
-                               Foreground="{DynamicResource SecondaryForegroundBrush}" Text="{x:Static l:Strings.DetectingDisplays}" />
-                </StackPanel>
-
-                <TextBlock Margin="8,14" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
-                           Foreground="{DynamicResource SecondaryForegroundBrush}" FontSize="12" Text="{Binding EmptyMessage}"
-                           Visibility="{Binding ShowEmptyState, Converter={StaticResource BooleanToVisibilityConverter}}" />
-
-                <ItemsControl Margin="-4,0" ItemsSource="{Binding Monitors}">
-                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Width="102" Height="108" Margin="4,0,4,9" ToolTip="{Binding ToolTip}">
-                                <ui:BrightnessBox IsEnabled="{Binding IsControllable}"
-                                                  Value="{Binding CurrentPercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  ValueCommitRequested="BrightnessBox_OnValueCommitRequested"
-                                                  AutomationProperties.Name="{Binding DisplayName}" />
-                                <Grid Margin="7" IsHitTestVisible="False">
-                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                    <Border Margin="0,0,24,0" Padding="5,3" CornerRadius="4" Background="{DynamicResource OverlayBackgroundBrush}">
-                                        <TextBlock x:Name="DisplayNameText" FontSize="10" FontWeight="SemiBold" Text="{Binding DisplayName}"
-                                                   TextTrimming="CharacterEllipsis" />
-                                    </Border>
-                                    <Border Grid.Row="1" Margin="4" Padding="5,3" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                            CornerRadius="4" Background="{DynamicResource OverlayBackgroundBrush}"
-                                            Visibility="{Binding HasCompactStatus, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                        <TextBlock Foreground="{DynamicResource ErrorBrush}" FontSize="9" FontWeight="SemiBold"
-                                                   Text="{Binding CompactStatusText}" TextAlignment="Center" TextWrapping="Wrap" />
-                                    </Border>
-                                    <Border Grid.Row="2" Padding="6,3" HorizontalAlignment="Right" CornerRadius="4"
-                                            Background="{DynamicResource OverlayBackgroundBrush}">
-                                        <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding BrightnessText}" />
-                                    </Border>
-                                </Grid>
-                                <TextBox x:Name="DisplayRenameTextBox" Margin="12,10,36,0" VerticalAlignment="Top"
-                                         FontSize="10" FontWeight="SemiBold"
-                                         Style="{StaticResource InlineRenameTextBoxStyle}"
-                                         Text="{Binding EditName, UpdateSourceTrigger=PropertyChanged}"
-                                         AutomationProperties.Name="{x:Static l:Strings.DisplayName}"
-                                         IsVisibleChanged="RenameTextBox_OnIsVisibleChanged"
-                                         KeyDown="DisplayRenameTextBox_OnKeyDown" />
-                                <Button x:Name="DisplaySaveButton" HorizontalAlignment="Right" VerticalAlignment="Top"
-                                        Margin="0,6,6,0" Style="{StaticResource TileSaveButtonStyle}"
-                                        IsEnabled="{Binding CanSaveName}" Click="DisplaySaveButton_OnClick" />
-                                <Button x:Name="DisplayMenuButton" HorizontalAlignment="Right" VerticalAlignment="Top"
-                                        Margin="0,6,6,0" Style="{StaticResource TileMenuButtonStyle}"
-                                        Click="TileMenuButton_OnClick">
-                                    <Button.ContextMenu>
-                                        <ContextMenu Placement="Bottom" Closed="TileContextMenu_OnClosed"
-                                                     Background="{DynamicResource SurfaceBrush}"
-                                                     BorderBrush="{DynamicResource StrongBorderBrush}"
-                                                     BorderThickness="1" Padding="3" Opacity="1"
-                                                     SnapsToDevicePixels="True"
-                                                     DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-                                            <MenuItem Header="{x:Static l:Strings.Rename}" CommandParameter="{Binding}"
-                                                      Style="{StaticResource DisplayMenuItemStyle}"
-                                                      Click="RenameDisplayMenuItem_OnClick" />
-                                        </ContextMenu>
-                                    </Button.ContextMenu>
-                                </Button>
-                            </Grid>
-                            <DataTemplate.Triggers>
-                                <DataTrigger Binding="{Binding IsRenaming}" Value="True">
-                                    <Setter TargetName="DisplayNameText" Property="Visibility" Value="Hidden" />
-                                    <Setter TargetName="DisplayRenameTextBox" Property="Visibility" Value="Visible" />
-                                    <Setter TargetName="DisplayMenuButton" Property="Visibility" Value="Collapsed" />
-                                    <Setter TargetName="DisplaySaveButton" Property="Visibility" Value="Visible" />
-                                </DataTrigger>
-                            </DataTemplate.Triggers>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-
-                <TextBlock Margin="3,0,3,9" FontSize="10" TextWrapping="Wrap"
-                           Foreground="{DynamicResource ErrorBrush}" Text="{Binding DisplayRenameMessage}"
-                           Visibility="{Binding HasDisplayRenameMessage, Converter={StaticResource BooleanToVisibilityConverter}}" />
-
-            </StackPanel>
-        </ScrollViewer>
+            </ScrollViewer>
+        </DockPanel>
     </Border>
 </Window>

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
@@ -144,7 +145,7 @@ public partial class FlyoutWindow : Window
     {
         if (sender is WpfButton { DataContext: ProfileTileViewModel { IsRenaming: false } tile })
         {
-            await _viewModel.ApplyProfileAsync(tile.Profile);
+            await _viewModel.ApplyProfileAsync(tile);
         }
     }
 
@@ -185,6 +186,8 @@ public partial class FlyoutWindow : Window
         {
             _isTileMenuOpen = true;
             menu.PlacementTarget = button;
+            menu.Placement = PlacementMode.Custom;
+            menu.CustomPopupPlacementCallback = TileMenuPlacement.Create(button);
             menu.IsOpen = true;
             e.Handled = true;
         }

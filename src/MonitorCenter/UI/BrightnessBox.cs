@@ -9,20 +9,26 @@ using MediaBrushes = System.Windows.Media.Brushes;
 using MediaPen = System.Windows.Media.Pen;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
 using WpfMouseEventArgs = System.Windows.Input.MouseEventArgs;
-using WpfPoint = System.Windows.Point;
 using WpfSize = System.Windows.Size;
 
 namespace MonitorCenter.UI;
 
 public sealed class BrightnessBox : FrameworkElement
 {
-    private static readonly DependencyProperty TileBackgroundProperty = RegisterBrush("TileBackground");
-    private static readonly DependencyProperty TileHoverProperty = RegisterBrush("TileHover");
-    private static readonly DependencyProperty TileDisabledProperty = RegisterBrush("TileDisabled");
-    private static readonly DependencyProperty TileFillProperty = RegisterBrush("TileFill");
-    private static readonly DependencyProperty TileDisabledFillProperty = RegisterBrush("TileDisabledFill");
-    private static readonly DependencyProperty TileFillEdgeProperty = RegisterBrush("TileFillEdge");
-    private static readonly DependencyProperty TileFocusBorderProperty = RegisterBrush("TileFocusBorder");
+    private static readonly DependencyProperty FrameProperty = RegisterBrush("Frame");
+    private static readonly DependencyProperty FrameHoverProperty = RegisterBrush("FrameHover");
+    private static readonly DependencyProperty BezelProperty = RegisterBrush("Bezel");
+    private static readonly DependencyProperty ScreenProperty = RegisterBrush("Screen");
+    private static readonly DependencyProperty FillTopProperty = RegisterBrush("FillTop");
+    private static readonly DependencyProperty FillBottomProperty = RegisterBrush("FillBottom");
+    private static readonly DependencyProperty DisabledFillProperty = RegisterBrush("DisabledFill");
+    private static readonly DependencyProperty FocusBorderProperty = RegisterBrush("FocusBorder");
+
+    /// <summary>The frame and bezel around the screen; only the screen maps to brightness.</summary>
+    private const double ScreenInset = 5;
+    private const double FrameCornerRadius = 6.5;
+    private const double ScreenCornerRadius = 2.5;
+    private LinearGradientBrush? _fillBrush;
     private bool _isDragging;
     private int _wheelDelta;
 
@@ -53,13 +59,14 @@ public sealed class BrightnessBox : FrameworkElement
         MouseLeave += (_, _) => { _wheelDelta = 0; InvalidateVisual(); };
         GotKeyboardFocus += (_, _) => InvalidateVisual();
         LostKeyboardFocus += (_, _) => InvalidateVisual();
-        SetResourceReference(TileBackgroundProperty, "TileBackgroundBrush");
-        SetResourceReference(TileHoverProperty, "TileHoverBrush");
-        SetResourceReference(TileDisabledProperty, "TileDisabledBrush");
-        SetResourceReference(TileFillProperty, "TileFillBrush");
-        SetResourceReference(TileDisabledFillProperty, "TileDisabledFillBrush");
-        SetResourceReference(TileFillEdgeProperty, "TileFillEdgeBrush");
-        SetResourceReference(TileFocusBorderProperty, "AccentBrush");
+        SetResourceReference(FrameProperty, "MonitorFrameBrush");
+        SetResourceReference(FrameHoverProperty, "MonitorFrameHoverBrush");
+        SetResourceReference(BezelProperty, "MonitorBezelBrush");
+        SetResourceReference(ScreenProperty, "MonitorScreenBrush");
+        SetResourceReference(FillTopProperty, "MonitorFillTopBrush");
+        SetResourceReference(FillBottomProperty, "MonitorFillBottomBrush");
+        SetResourceReference(DisabledFillProperty, "MonitorDisabledFillBrush");
+        SetResourceReference(FocusBorderProperty, "AccentBrush");
     }
 
     public event EventHandler? ValueCommitRequested;
@@ -78,53 +85,60 @@ public sealed class BrightnessBox : FrameworkElement
 
     protected override WpfSize MeasureOverride(WpfSize availableSize)
     {
-        var width = double.IsInfinity(availableSize.Width) ? 300 : availableSize.Width;
-        return new WpfSize(Math.Max(1, width), 96);
+        var width = double.IsInfinity(availableSize.Width) ? 100 : availableSize.Width;
+        var height = double.IsInfinity(availableSize.Height) ? 82 : availableSize.Height;
+        return new WpfSize(Math.Max(1, width), Math.Max(1, height));
     }
 
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
 
-        if (ActualWidth <= 1 || ActualHeight <= 1)
+        if (ActualWidth <= ScreenInset * 2 + 1 || ActualHeight <= ScreenInset * 2 + 1)
         {
             return;
         }
 
-        const double cornerRadius = 9;
-        var bounds = new Rect(0.5, 0.5, ActualWidth - 1, ActualHeight - 1);
-        var clip = new RectangleGeometry(bounds, cornerRadius, cornerRadius);
-        var background = !IsEnabled
-            ? GetBrush(TileDisabledProperty)
-            : IsMouseOver
-                ? GetBrush(TileHoverProperty)
-                : GetBrush(TileBackgroundProperty);
-        drawingContext.PushClip(clip);
-        drawingContext.DrawRectangle(background, null, bounds);
+        var frame = new Rect(0.5, 0.5, ActualWidth - 1, ActualHeight - 1);
+        var frameBrush = IsEnabled && IsMouseOver ? GetBrush(FrameHoverProperty) : GetBrush(FrameProperty);
+        drawingContext.DrawRoundedRectangle(
+            GetBrush(BezelProperty), new MediaPen(frameBrush, 1), frame, FrameCornerRadius, FrameCornerRadius);
 
-        var fillHeight = bounds.Height * Value / 100d;
+        var screen = ScreenBounds(ActualWidth, ActualHeight);
+        drawingContext.PushClip(new RectangleGeometry(screen, ScreenCornerRadius, ScreenCornerRadius));
+        drawingContext.DrawRectangle(GetBrush(ScreenProperty), null, screen);
+
+        var fillHeight = screen.Height * Value / 100d;
         if (fillHeight > 0)
         {
-            var fill = new Rect(bounds.Left, bounds.Bottom - fillHeight, bounds.Width, fillHeight);
-            drawingContext.DrawRectangle(
-                IsEnabled ? GetBrush(TileFillProperty) : GetBrush(TileDisabledFillProperty),
-                null,
-                fill);
-
-            if (IsEnabled && Value < 100)
-            {
-                drawingContext.DrawLine(
-                    new MediaPen(GetBrush(TileFillEdgeProperty), 1),
-                    new WpfPoint(bounds.Left, fill.Top + 0.5),
-                    new WpfPoint(bounds.Right, fill.Top + 0.5));
-            }
+            var fill = new Rect(screen.Left, screen.Bottom - fillHeight, screen.Width, fillHeight);
+            drawingContext.DrawRectangle(IsEnabled ? GetFillBrush() : GetBrush(DisabledFillProperty), null, fill);
         }
 
         drawingContext.Pop();
         if (IsKeyboardFocused)
         {
-            drawingContext.DrawRoundedRectangle(null, new MediaPen(GetBrush(TileFocusBorderProperty), 2), bounds, cornerRadius, cornerRadius);
+            var focus = new Rect(1, 1, ActualWidth - 2, ActualHeight - 2);
+            drawingContext.DrawRoundedRectangle(
+                null, new MediaPen(GetBrush(FocusBorderProperty), 2), focus, FrameCornerRadius, FrameCornerRadius);
         }
+    }
+
+    private static Rect ScreenBounds(double width, double height) =>
+        new(ScreenInset, ScreenInset, width - ScreenInset * 2, height - ScreenInset * 2);
+
+    /// <summary>The fill fades from light at its top edge to deep blue at the bottom, whatever its height.</summary>
+    private MediaBrush GetFillBrush()
+    {
+        var top = (GetBrush(FillTopProperty) as SolidColorBrush)?.Color ?? Colors.Transparent;
+        var bottom = (GetBrush(FillBottomProperty) as SolidColorBrush)?.Color ?? Colors.Transparent;
+        if (_fillBrush is null || _fillBrush.GradientStops[0].Color != top || _fillBrush.GradientStops[1].Color != bottom)
+        {
+            _fillBrush = new LinearGradientBrush(top, bottom, 90);
+            _fillBrush.Freeze();
+        }
+
+        return _fillBrush;
     }
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
@@ -284,7 +298,7 @@ public sealed class BrightnessBox : FrameworkElement
 
     private void UpdateFromPointer(double y)
     {
-        Value = ValueFromY(y, ActualHeight);
+        Value = ValueFromY(y - ScreenInset, ActualHeight - ScreenInset * 2);
     }
 
     private void CompleteInteraction()
