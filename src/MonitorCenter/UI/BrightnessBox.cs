@@ -22,8 +22,6 @@ public sealed class BrightnessBox : FrameworkElement
     private static readonly DependencyProperty TileFillProperty = RegisterBrush("TileFill");
     private static readonly DependencyProperty TileDisabledFillProperty = RegisterBrush("TileDisabledFill");
     private static readonly DependencyProperty TileFillEdgeProperty = RegisterBrush("TileFillEdge");
-    private static readonly DependencyProperty TileBorderProperty = RegisterBrush("TileBorder");
-    private static readonly DependencyProperty TileStrongBorderProperty = RegisterBrush("TileStrongBorder");
     private static readonly DependencyProperty TileFocusBorderProperty = RegisterBrush("TileFocusBorder");
     private bool _isDragging;
     private int _wheelDelta;
@@ -61,8 +59,6 @@ public sealed class BrightnessBox : FrameworkElement
         SetResourceReference(TileFillProperty, "TileFillBrush");
         SetResourceReference(TileDisabledFillProperty, "TileDisabledFillBrush");
         SetResourceReference(TileFillEdgeProperty, "TileFillEdgeBrush");
-        SetResourceReference(TileBorderProperty, "BorderBrush");
-        SetResourceReference(TileStrongBorderProperty, "StrongBorderBrush");
         SetResourceReference(TileFocusBorderProperty, "AccentBrush");
     }
 
@@ -103,13 +99,6 @@ public sealed class BrightnessBox : FrameworkElement
             : IsMouseOver
                 ? GetBrush(TileHoverProperty)
                 : GetBrush(TileBackgroundProperty);
-        var borderBrush = IsKeyboardFocused
-            ? GetBrush(TileFocusBorderProperty)
-            : IsEnabled && IsMouseOver
-                ? GetBrush(TileStrongBorderProperty)
-                : GetBrush(TileBorderProperty);
-        var border = new MediaPen(borderBrush, IsKeyboardFocused ? 2 : 1);
-
         drawingContext.PushClip(clip);
         drawingContext.DrawRectangle(background, null, bounds);
 
@@ -132,7 +121,10 @@ public sealed class BrightnessBox : FrameworkElement
         }
 
         drawingContext.Pop();
-        drawingContext.DrawRoundedRectangle(null, border, bounds, cornerRadius, cornerRadius);
+        if (IsKeyboardFocused)
+        {
+            drawingContext.DrawRoundedRectangle(null, new MediaPen(GetBrush(TileFocusBorderProperty), 2), bounds, cornerRadius, cornerRadius);
+        }
     }
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
