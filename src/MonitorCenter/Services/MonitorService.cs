@@ -152,6 +152,35 @@ internal sealed class MonitorService : IAsyncDisposable
     private BrightnessBackendKind LastDdcBackend(string id) =>
         _lastDdcBackends.TryGetValue(id, out var backend) ? backend : BrightnessBackendKind.None;
 
+    /// <summary>
+    /// Runs <paramref name="work"/> while nothing else talks to the displays, passing it the displays as last
+    /// discovered. Used by the problem report, whose own reads would otherwise collide with brightness changes.
+    /// </summary>
+    public async Task<T> RunExclusiveAsync<T>(
+        Func<IReadOnlyList<MonitorSnapshot>, T> work,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _probeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var snapshots = _endpoints.Values.Select(endpoint => endpoint.ToSnapshot()).ToArray();
+                return await Task.Run(() => work(snapshots), cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _probeGate.Release();
+            }
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
     public async Task<BrightnessResult> SetBrightnessAsync(
         string monitorId,
         int percent,
@@ -381,7 +410,7 @@ internal sealed class MonitorService : IAsyncDisposable
             : MonitorEndpoint.CreateUnavailable(id, friendlyName, serial, displayDevice, bounds);
     }
 
-    private static NativeMethods.DisplayDevice ReadDisplayDevice(string logicalDeviceName)
+    internal static NativeMethods.DisplayDevice ReadDisplayDevice(string logicalDeviceName)
     {
         var device = new NativeMethods.DisplayDevice
         {

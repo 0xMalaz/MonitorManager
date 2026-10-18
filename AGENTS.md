@@ -30,6 +30,10 @@ Rules:
 - Don't upgrade the `Velopack` NuGet package without upgrading `vpk` in `dotnet-tools.json` to the same version.
 - Builds run with `dotnet run` or from `dist\` are not installed, so updating is unavailable there and the update window says so. That is expected.
 
+## Problem reports
+
+**Report a problem** in the tray menu opens `UI/ReportProblemWindow.cs`. `Services/DiagnosticsReport.cs` builds a read-only text report (desktop areas, graphics outputs and their displays, DDC/CI reads, WMI monitor classes, and what the app made of each display) while `MonitorService.RunExclusiveAsync` keeps everything else off the displays. It must never write brightness, and serial numbers must stay masked. `Services/ProblemReportSender.cs` posts it to a Cloudflare Worker (`Endpoint`), which files it as an issue in the private repo `0xMalaz/MonitorManager-reports`; the Worker holds the GitHub token, the app holds no secret. The Worker's code is in a separate local project, `monitorcenter-reports`. Set `MONITORCENTER_REPORT_ENDPOINT` to point reports elsewhere while testing, so you don't file real issues. A report that can't be sent is saved to `%LocalAppData%\MonitorCenter\Reports`.
+
 ### Releasing
 
 Releases are published by `.github/workflows/release.yml` when a `vX.Y.Z` tag is pushed. It checks the tag matches `<Version>` in `src/MonitorCenter/MonitorCenter.csproj`, runs the tests, builds delta and full packages with `tools/Build-Release.ps1`, uploads them to a draft release, adds `MonitorCenter-Setup.exe` and generated notes, then publishes.

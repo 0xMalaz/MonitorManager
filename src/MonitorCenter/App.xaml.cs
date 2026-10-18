@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Threading;
 using MonitorCenter.Services;
@@ -20,6 +21,7 @@ public partial class App : System.Windows.Application
     private StartupRegistration? _startupRegistration;
     private UpdateCoordinator? _updates;
     private UpdateWindow? _updateWindow;
+    private ReportProblemWindow? _reportWindow;
     private DispatcherTimer? _updateCheckTimer;
     private string? _notifiedUpdateVersion;
     private int _isShuttingDown;
@@ -56,6 +58,7 @@ public partial class App : System.Windows.Application
         _updates.StatusChanged += status => _updateWindow?.Render(status);
         _trayIcon = new TrayIconController(_flyoutWindow, _startupRegistration);
         _trayIcon.UpdateRequested += OnUpdateRequested;
+        _trayIcon.ReportProblemRequested += OnReportProblemRequested;
         _trayIcon.ExitRequested += OnExitRequested;
         _trayIcon.MenuOpening += OnTrayMenuOpening;
         _updates.AvailableVersionChanged += OnAvailableUpdateChanged;
@@ -123,6 +126,38 @@ public partial class App : System.Windows.Application
         await _updates.RunAsync();
     }
 
+    private void OnReportProblemRequested(object? sender, EventArgs e)
+    {
+        if (_isShuttingDown != 0 || _monitorService is not { } monitorService) return;
+        if (_reportWindow is null)
+        {
+            var version = AppVersion;
+            _reportWindow = new ReportProblemWindow(
+                cancellationToken => DiagnosticsReport.CollectAsync(version, monitorService, cancellationToken),
+                async (description, report, cancellationToken) =>
+                {
+                    using var reportSender = new ProblemReportSender();
+                    await reportSender.SendAsync(version, description, report, cancellationToken);
+                });
+            _reportWindow.Closed += (_, _) => _reportWindow = null;
+        }
+        _reportWindow.Show();
+        _reportWindow.Activate();
+    }
+
+    /// <summary>The app version without the commit hash the SDK appends to it.</summary>
+    private static string AppVersion
+    {
+        get
+        {
+            var version = typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                          ?? typeof(App).Assembly.GetName().Version?.ToString()
+                          ?? "unknown";
+            var commit = version.IndexOf('+');
+            return commit < 0 ? version : version[..commit];
+        }
+    }
+
     /// <summary>
     /// Checks for updates shortly after startup and then every few hours, so the tray menu can offer to install one.
     /// Nothing is downloaded until the user chooses to install it.
@@ -162,6 +197,7 @@ public partial class App : System.Windows.Application
         if (_trayIcon is not null)
         {
             _trayIcon.UpdateRequested -= OnUpdateRequested;
+            _trayIcon.ReportProblemRequested -= OnReportProblemRequested;
             _trayIcon.ExitRequested -= OnExitRequested;
             _trayIcon.MenuOpening -= OnTrayMenuOpening;
             _trayIcon.Dispose();
@@ -173,6 +209,7 @@ public partial class App : System.Windows.Application
         _updates?.Dispose();
         _updates = null;
         _updateWindow?.Close();
+        _reportWindow?.Close();
 
         _flyoutWindow?.BeginShutdown();
         _flyoutWindow?.Hide();

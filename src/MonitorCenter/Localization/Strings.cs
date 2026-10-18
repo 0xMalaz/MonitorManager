@@ -89,6 +89,7 @@ public static class Strings
     internal static string CheckForUpdates => T("Check for updates", "Güncellemeleri denetle");
     internal static string InstallUpdate(string version) =>
         T($"Install update ({version})", $"Güncellemeyi yükle ({version})");
+    internal static string ReportProblem => T("Report a problem", "Sorun bildir");
     internal static string StartWithWindows => T("Start with Windows", "Windows ile başlat");
     internal static string Exit => T("Exit", "Çıkış");
     internal static string StartWithWindowsFailed =>
@@ -120,4 +121,29 @@ public static class Strings
     internal static string UpdateFailed(string reason) => T(
         $"Update failed: {reason}\nTry again from the tray menu.",
         $"Güncelleme başarısız oldu: {reason}\nTepsi menüsünden yeniden deneyin.");
+
+    // Problem report window
+    internal static string ReportProblemIntro => T(
+        "MonitorCenter will send a report about your displays to its developer. It includes display names and " +
+        "models, how they are connected, how they answer brightness requests, your PC model and graphics drivers. " +
+        "Serial numbers are hidden. Nothing else on your PC is included.",
+        "MonitorCenter, ekranlarınızla ilgili bir raporu geliştiricisine gönderecek. Rapor; ekran adlarını ve " +
+        "modellerini, nasıl bağlandıklarını, parlaklık isteklerine nasıl yanıt verdiklerini, bilgisayar modelinizi " +
+        "ve ekran kartı sürücülerinizi içerir. Seri numaraları gizlenir. Bilgisayarınızdaki başka hiçbir bilgi eklenmez.");
+    internal static string ReportProblemDescription =>
+        T("What went wrong? (optional)", "Sorun nedir? (isteğe bağlı)");
+    internal static string ReportProblemContents => T("Report that will be sent", "Gönderilecek rapor");
+    internal static string CollectingReport => T("Collecting display information…", "Ekran bilgileri toplanıyor…");
+    internal static string ReportCollectionFailed(string reason) =>
+        T($"The report could not be collected: {reason}", $"Rapor toplanamadı: {reason}");
+    internal static string SendReport => T("Send", "Gönder");
+    internal static string Close => T("Close", "Kapat");
+    internal static string SendingReport => T("Sending the report…", "Rapor gönderiliyor…");
+    internal static string ReportSent => T("Report sent. Thank you!", "Rapor gönderildi. Teşekkürler!");
+    internal static string ReportSaved(string reason, string path) => T(
+        $"The report could not be sent ({reason}). It was saved to {path}, so you can send it another way.",
+        $"Rapor gönderilemedi ({reason}). Başka bir yolla gönderebilmeniz için {path} konumuna kaydedildi.");
+    internal static string ReportNotSaved(string reason) => T(
+        $"The report could not be sent or saved ({reason}).",
+        $"Rapor gönderilemedi ve kaydedilemedi ({reason}).");
 }

@@ -53,6 +53,27 @@ public sealed class HardwareIntegrationTests
     }
 
     [TestMethod]
+    public async Task DiagnosticsReport_DescribesEveryDisplayWithoutSerials()
+    {
+        RequireEnvironmentVariable("MONITORCENTER_HARDWARE_TESTS");
+        await using var service = new MonitorService();
+        var monitors = await service.DiscoverAsync();
+
+        var report = await DiagnosticsReport.CollectAsync("test", service, CancellationToken.None);
+        TestContext.WriteLine(report);
+
+        Assert.IsFalse(report.Contains("(failed:"), "A report section failed.");
+        foreach (var monitor in monitors)
+        {
+            StringAssert.Contains(report, monitor.DisplayDevice);
+            if (!string.IsNullOrWhiteSpace(monitor.Serial))
+            {
+                Assert.IsFalse(report.Contains(monitor.Serial), $"{monitor.DisplayName}'s serial number is in the report.");
+            }
+        }
+    }
+
+    [TestMethod]
     public async Task ReadyMonitors_AcceptSmallChangeAndRestoreOriginalBrightness()
     {
         RequireEnvironmentVariable("MONITORCENTER_HARDWARE_WRITE_TESTS");

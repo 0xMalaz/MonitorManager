@@ -43,6 +43,8 @@ internal sealed class TrayIconController : IDisposable
         // The default Windows Forms menu, without custom colours or renderer, so it looks like a standard Windows menu.
         _updateItem = new Forms.ToolStripMenuItem(CheckForUpdatesText);
         _updateItem.Click += (_, _) => UpdateRequested?.Invoke(this, EventArgs.Empty);
+        var reportItem = new Forms.ToolStripMenuItem(Strings.ReportProblem);
+        reportItem.Click += (_, _) => ReportProblemRequested?.Invoke(this, EventArgs.Empty);
         _startupItem = new Forms.ToolStripMenuItem(Strings.StartWithWindows);
         _startupItem.Click += (_, _) => SetStartupPreference(!_startupItem.Checked);
         var exitItem = new Forms.ToolStripMenuItem(Strings.Exit);
@@ -50,6 +52,7 @@ internal sealed class TrayIconController : IDisposable
 
         _contextMenu = new Forms.ContextMenuStrip();
         _contextMenu.Items.Add(_updateItem);
+        _contextMenu.Items.Add(reportItem);
         _contextMenu.Items.Add(new Forms.ToolStripSeparator());
         _contextMenu.Items.Add(_startupItem);
         _contextMenu.Items.Add(new Forms.ToolStripSeparator());
@@ -61,6 +64,8 @@ internal sealed class TrayIconController : IDisposable
     internal static string CheckForUpdatesText => Strings.CheckForUpdates;
 
     public event EventHandler? UpdateRequested;
+
+    public event EventHandler? ReportProblemRequested;
 
     /// <summary>Raised just before the tray menu is shown.</summary>
     public event EventHandler? MenuOpening;

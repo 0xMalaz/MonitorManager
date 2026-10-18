@@ -42,7 +42,7 @@ If you still use 1.0.0 (the zip version), exit it and run the installer. Your se
 - Click or drag on a display's screen to set brightness. Bottom is 0%, top is 100%. The mouse wheel and arrow keys work too.
 - Use the **⋯** button next to a display's name to rename it.
 - **New Profile** saves the current brightness of every display. Click a profile to apply it; its bars show the brightness it sets on each display.
-- Right-click the tray icon to check for updates, toggle **Start with Windows**, or exit.
+- Right-click the tray icon to check for updates, report a problem, toggle **Start with Windows**, or exit.
 
 ## A display shows as unavailable
 
@@ -53,6 +53,10 @@ External monitors are controlled over DDC/CI and laptop screens through Windows.
 3. Click the refresh button at the top of the flyout.
 
 Some docks and adapters don't pass DDC/CI through at all.
+
+## Report a problem
+
+If a display is missing or can't be controlled, right-click the tray icon and choose **Report a problem**. MonitorCenter collects a report about your displays and shows it to you before anything is sent. It includes display names and models, how they're connected, how they answer brightness requests, your PC model and graphics drivers. Serial numbers are replaced by a short hash, and collecting it never changes brightness. Add a description if you like and click **Send**. If the report can't be sent, it's saved to `%LOCALAPPDATA%\MonitorCenter\Reports` instead.
 
 ## Build from source
 
