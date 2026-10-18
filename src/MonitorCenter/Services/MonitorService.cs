@@ -265,9 +265,10 @@ internal sealed class MonitorService : IAsyncDisposable
 
         var displayDevice = ReadDisplayDevice(info.DeviceName);
         var normalizedInstance = WmiMonitorReader.NormalizeInstanceName(displayDevice.DeviceId);
-        var stableBaseId = string.IsNullOrWhiteSpace(normalizedInstance)
-            ? info.DeviceName
-            : normalizedInstance;
+        var stableBaseId = UniqueBaseId(
+            string.IsNullOrWhiteSpace(normalizedInstance) ? info.DeviceName : normalizedInstance,
+            info.DeviceName,
+            result.Keys);
 
         string friendlyName;
         string? serial;
@@ -410,25 +411,71 @@ internal sealed class MonitorService : IAsyncDisposable
             : MonitorEndpoint.CreateUnavailable(id, friendlyName, serial, displayDevice, bounds);
     }
 
+    /// <summary>
+    /// Returns the display shown on a desktop area. An output can list displays it isn't showing: on laptops with
+    /// two graphics chips, every output of one chip can list the built-in screen first, marked not active.
+    /// </summary>
     internal static NativeMethods.DisplayDevice ReadDisplayDevice(string logicalDeviceName)
     {
-        var device = new NativeMethods.DisplayDevice
+        var displays = new List<NativeMethods.DisplayDevice>();
+        for (uint index = 0; ; index++)
         {
-            Size = Marshal.SizeOf<NativeMethods.DisplayDevice>()
-        };
+            var device = new NativeMethods.DisplayDevice
+            {
+                Size = Marshal.SizeOf<NativeMethods.DisplayDevice>()
+            };
 
-        if (!NativeMethods.EnumDisplayDevices(
-                logicalDeviceName,
-                0,
-                ref device,
-                NativeMethods.EDD_GET_DEVICE_INTERFACE_NAME))
-        {
-            device.DeviceName = logicalDeviceName;
-            device.DeviceString = logicalDeviceName;
-            device.DeviceId = logicalDeviceName;
+            if (!NativeMethods.EnumDisplayDevices(
+                    logicalDeviceName,
+                    index,
+                    ref device,
+                    NativeMethods.EDD_GET_DEVICE_INTERFACE_NAME))
+            {
+                break;
+            }
+
+            displays.Add(device);
         }
 
-        return device;
+        if (SelectShownDisplay(displays) is { } shown)
+        {
+            return shown;
+        }
+
+        return new NativeMethods.DisplayDevice
+        {
+            Size = Marshal.SizeOf<NativeMethods.DisplayDevice>(),
+            DeviceName = logicalDeviceName,
+            DeviceString = logicalDeviceName,
+            DeviceId = logicalDeviceName
+        };
+    }
+
+    /// <summary>The first active display, or the first display when none is marked active.</summary>
+    internal static NativeMethods.DisplayDevice? SelectShownDisplay(IReadOnlyList<NativeMethods.DisplayDevice> displays)
+    {
+        foreach (var display in displays)
+        {
+            if ((display.StateFlags & NativeMethods.DISPLAY_DEVICE_ACTIVE) != 0)
+            {
+                return display;
+            }
+        }
+
+        return displays.Count > 0 ? displays[0] : null;
+    }
+
+    /// <summary>
+    /// Returns <paramref name="baseId"/>, or when another desktop area already has it, the same ID qualified by this
+    /// area's device name. Two areas must never share an ID: the second would replace the first, hiding a display
+    /// and pointing its tile's brightness at the wrong one.
+    /// </summary>
+    internal static string UniqueBaseId(string baseId, string logicalDeviceName, IEnumerable<string> takenIds)
+    {
+        var taken = takenIds.Any(id =>
+            string.Equals(id, baseId, StringComparison.OrdinalIgnoreCase) ||
+            id.StartsWith(baseId + ":", StringComparison.OrdinalIgnoreCase));
+        return taken ? $"{baseId}@{logicalDeviceName}" : baseId;
     }
 
     public async ValueTask DisposeAsync()
