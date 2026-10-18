@@ -30,7 +30,7 @@ internal sealed class ReportProblemWindow : Window
     {
         IsReadOnly = true,
         TextWrapping = TextWrapping.NoWrap,
-        Height = 240,
+        MinHeight = 80,
         FontFamily = new FontFamily("Cascadia Mono, Consolas"),
         FontSize = 11,
         HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -54,9 +54,13 @@ internal sealed class ReportProblemWindow : Window
         Title = Strings.ReportProblem;
         SetResourceReference(BackgroundProperty, "WindowBackgroundBrush");
         SetResourceReference(ForegroundProperty, "PrimaryForegroundBrush");
-        Width = 640;
-        SizeToContent = SizeToContent.Height;
-        ResizeMode = ResizeMode.NoResize;
+        // The report box takes whatever height is left, so the buttons stay on screen on small or scaled displays.
+        var workArea = SystemParameters.WorkArea;
+        Width = Math.Min(640, workArea.Width - 32);
+        Height = Math.Min(680, workArea.Height - 32);
+        MinWidth = Math.Min(420, Width);
+        MinHeight = Math.Min(400, Height);
+        ResizeMode = ResizeMode.CanResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         _sendButton.SetResourceReference(StyleProperty, "PrimaryButtonStyle");
@@ -69,15 +73,27 @@ internal sealed class ReportProblemWindow : Window
         buttons.Children.Add(_closeButton);
         buttons.Children.Add(_sendButton);
 
-        var panel = new StackPanel { Margin = new Thickness(24) };
-        panel.Children.Add(intro);
-        panel.Children.Add(new TextBlock { Text = Strings.ReportProblemDescription });
-        panel.Children.Add(_description);
-        panel.Children.Add(new TextBlock { Text = Strings.ReportProblemContents });
-        panel.Children.Add(_report);
-        panel.Children.Add(_status);
-        panel.Children.Add(buttons);
-        Content = panel;
+        var layout = new Grid { Margin = new Thickness(24) };
+        UIElement[] rows =
+        [
+            intro,
+            new TextBlock { Text = Strings.ReportProblemDescription },
+            _description,
+            new TextBlock { Text = Strings.ReportProblemContents },
+            _report,
+            _status,
+            buttons
+        ];
+        for (var row = 0; row < rows.Length; row++)
+        {
+            layout.RowDefinitions.Add(new RowDefinition
+            {
+                Height = rows[row] == _report ? new GridLength(1, GridUnitType.Star) : GridLength.Auto
+            });
+            Grid.SetRow(rows[row], row);
+            layout.Children.Add(rows[row]);
+        }
+        Content = layout;
 
         SourceInitialized += (_, _) => ThemeManager.ApplyWindowTheme(this, NoBackdrop);
         Loaded += async (_, _) => await CollectAsync();

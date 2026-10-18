@@ -134,7 +134,7 @@ public partial class App : System.Windows.Application
             var version = AppVersion;
             _reportWindow = new ReportProblemWindow(
                 cancellationToken => monitorService.RunExclusiveAsync(
-                    snapshots => DiagnosticsReport.Collect(version, snapshots),
+                    snapshots => DiagnosticsReport.Collect(version, snapshots, cancellationToken),
                     cancellationToken),
                 async (description, report, cancellationToken) =>
                 {

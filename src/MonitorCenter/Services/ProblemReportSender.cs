@@ -64,19 +64,46 @@ internal sealed class ProblemReportSender : IDisposable
     {
         var text = ComposeText(description, report);
         var summary = Summarize(description);
-
-        while (true)
+        var json = Serialize(text);
+        if (json.Length <= MaxRequestLength)
         {
-            var json = JsonSerializer.Serialize(new { version, summary, report = text }, JsonOptions);
-            if (json.Length <= MaxRequestLength)
-            {
-                return json;
-            }
-
-            // Escaping makes the JSON longer than the text, so cut by the overshoot plus a margin and measure again.
-            var keep = Math.Max(0, text.Length - (json.Length - MaxRequestLength) - TruncatedMarker.Length - 256);
-            text = text[..keep] + TruncatedMarker;
+            return json;
         }
+
+        // Escaping makes the JSON longer than the text by an amount that depends on the text, so find the longest
+        // start of the text that fits by measuring the JSON itself.
+        var (low, high) = (0, text.Length);
+        var best = Serialize(TruncatedMarker);
+        while (low <= high)
+        {
+            var middle = low + (high - low) / 2;
+            var candidate = Serialize(Prefix(text, middle) + TruncatedMarker);
+            if (candidate.Length <= MaxRequestLength)
+            {
+                best = candidate;
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle - 1;
+            }
+        }
+
+        return best;
+
+        string Serialize(string reportText) =>
+            JsonSerializer.Serialize(new { version, summary, report = reportText }, JsonOptions);
+    }
+
+    /// <summary>The first <paramref name="length"/> characters, one fewer when that would split a surrogate pair.</summary>
+    internal static string Prefix(string text, int length)
+    {
+        if (length >= text.Length)
+        {
+            return text;
+        }
+
+        return length > 0 && char.IsHighSurrogate(text[length - 1]) ? text[..(length - 1)] : text[..length];
     }
 
     /// <summary>Saves the report where the user can find it, for when it can't be sent.</summary>
@@ -100,7 +127,7 @@ internal sealed class ProblemReportSender : IDisposable
         var firstLine = description
             .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .FirstOrDefault() ?? string.Empty;
-        return firstLine.Length <= MaxSummaryLength ? firstLine : firstLine[..MaxSummaryLength] + "…";
+        return firstLine.Length <= MaxSummaryLength ? firstLine : Prefix(firstLine, MaxSummaryLength) + "…";
     }
 
     public void Dispose() => _client.Dispose();

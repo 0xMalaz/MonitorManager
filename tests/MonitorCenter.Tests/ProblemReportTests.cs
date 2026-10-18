@@ -43,7 +43,7 @@ public sealed class ProblemReportTests
     }
 
     [TestMethod]
-    public void Request_OversizedReport_IsTruncatedBelowTheServiceLimit()
+    public void Request_OversizedReport_KeepsAsMuchAsFitsBelowTheServiceLimit()
     {
         // Quotes and newlines are escaped, so the JSON is much longer than the text itself.
         var report = string.Concat(Enumerable.Repeat("\"display\"\n", 20_000));
@@ -51,8 +51,43 @@ public sealed class ProblemReportTests
         var json = ProblemReportSender.BuildRequest("1.0.0", "too long", report);
 
         Assert.IsTrue(json.Length <= ProblemReportSender.MaxRequestLength, $"{json.Length} characters");
+        Assert.IsTrue(json.Length > ProblemReportSender.MaxRequestLength - 100, $"Only {json.Length} characters were kept.");
         using var document = JsonDocument.Parse(json);
-        StringAssert.EndsWith(document.RootElement.GetProperty("report").GetString(), ProblemReportSender.TruncatedMarker);
+        var sent = document.RootElement.GetProperty("report").GetString()!;
+        StringAssert.StartsWith(sent, "Description:\ntoo long\n\n\"display\"");
+        StringAssert.EndsWith(sent, ProblemReportSender.TruncatedMarker);
+    }
+
+    [TestMethod]
+    public void Request_Truncation_NeverSplitsASurrogatePair()
+    {
+        var report = string.Concat(Enumerable.Repeat("a😀", 40_000));
+
+        using var document = JsonDocument.Parse(ProblemReportSender.BuildRequest("1.0.0", new string('b', 79) + "😀", report));
+
+        var sent = document.RootElement.GetProperty("report").GetString()!;
+        var summary = document.RootElement.GetProperty("summary").GetString()!;
+        Assert.IsFalse(sent.Contains('�') || summary.Contains('�'), "A character was cut in half.");
+        Assert.AreEqual(new string('b', 79) + "…", summary);
+    }
+
+    [TestMethod]
+    public void Prefix_StepsBackOverAHalfCharacter()
+    {
+        Assert.AreEqual("a", ProblemReportSender.Prefix("a😀b", 2));
+        Assert.AreEqual("a😀", ProblemReportSender.Prefix("a😀b", 3));
+        Assert.AreEqual("a😀b", ProblemReportSender.Prefix("a😀b", 10));
+        Assert.AreEqual(string.Empty, ProblemReportSender.Prefix("a😀b", 0));
+    }
+
+    [TestMethod]
+    public void Collect_WhenCancelled_StopsBeforeTouchingAnyDisplay()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.ThrowsExactly<OperationCanceledException>(
+            () => DiagnosticsReport.Collect("1.0.0", [], cancellation.Token));
     }
 
     [TestMethod]

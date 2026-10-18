@@ -25,29 +25,42 @@ internal static class DiagnosticsReport
     /// <summary>The gap after a DDC/CI read before the next one, so the next read starts on a quiet bus.</summary>
     private static readonly TimeSpan DdcPause = TimeSpan.FromMilliseconds(300);
 
+    /// <summary>The longest a WMI query may take, so a stuck query can't hold the displays for long.</summary>
+    private static readonly TimeSpan WmiTimeout = TimeSpan.FromSeconds(10);
+
     /// <summary>Must run with exclusive access to the displays; see <see cref="MonitorService.RunExclusiveAsync{T}"/>.</summary>
-    public static string Collect(string appVersion, IReadOnlyList<MonitorSnapshot> appView)
+    /// <remarks><paramref name="cancellationToken"/> is checked between sections and between displays.</remarks>
+    public static string Collect(
+        string appVersion,
+        IReadOnlyList<MonitorSnapshot> appView,
+        CancellationToken cancellationToken = default)
     {
         var report = new StringBuilder();
-        Section(report, "System", () => WriteSystem(report, appVersion));
-        Section(report, "Displays as MonitorCenter sees them", () => WriteAppView(report, appView));
-        Section(report, "Desktop areas Windows reports (MonitorCenter makes one tile for each)",
-            () => WriteDesktopAreas(report));
-        Section(report, "Graphics outputs and the displays attached to them", () => WriteDisplayDevices(report));
-        Section(report, "WMI: WmiMonitorID", () => WriteWmi(report,
+        void Add(string title, Action write)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            DiagnosticsReport.Section(report, title, write);
+        }
+
+        Add("System", () => WriteSystem(report, appVersion));
+        Add("Displays as MonitorCenter sees them", () => WriteAppView(report, appView));
+        Add("Desktop areas Windows reports (MonitorCenter makes one tile for each)",
+            () => WriteDesktopAreas(report, cancellationToken));
+        Add("Graphics outputs and the displays attached to them", () => WriteDisplayDevices(report));
+        Add("WMI: WmiMonitorID", () => WriteWmi(report,
             "SELECT InstanceName, Active, ManufacturerName, ProductCodeID, UserFriendlyName, SerialNumberID FROM WmiMonitorID",
             item => $"maker={DecodeCharacters(item["ManufacturerName"])} " +
                     $"product={DecodeCharacters(item["ProductCodeID"])} " +
                     $"name=\"{DecodeCharacters(item["UserFriendlyName"])}\" " +
                     $"serial={MaskSerial(DecodeCharacters(item["SerialNumberID"]))}"));
-        Section(report, "WMI: WmiMonitorConnectionParams (5 HDMI, 10 DisplayPort, 11 internal DisplayPort, 0x80000000 internal)",
+        Add("WMI: WmiMonitorConnectionParams (5 HDMI, 10 DisplayPort, 11 internal DisplayPort, 0x80000000 internal)",
             () => WriteWmi(report,
                 "SELECT InstanceName, Active, VideoOutputTechnology FROM WmiMonitorConnectionParams",
                 item => $"connection={FormatConnection(item["VideoOutputTechnology"])}"));
-        Section(report, "WMI: WmiMonitorBrightness (built-in displays)", () => WriteWmi(report,
+        Add("WMI: WmiMonitorBrightness (built-in displays)", () => WriteWmi(report,
             "SELECT InstanceName, Active, CurrentBrightness, Level FROM WmiMonitorBrightness",
             item => $"current={item["CurrentBrightness"]} levels={(item["Level"] as Array)?.Length ?? 0}"));
-        Section(report, "WMI: WmiMonitorBrightnessMethods", () => WriteWmi(report,
+        Add("WMI: WmiMonitorBrightnessMethods", () => WriteWmi(report,
             "SELECT InstanceName, Active FROM WmiMonitorBrightnessMethods",
             _ => string.Empty));
         return report.ToString();
@@ -99,7 +112,7 @@ internal static class DiagnosticsReport
         {
             write();
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
             report.AppendLine($"(failed: {exception.GetType().Name}: {exception.Message})");
         }
@@ -128,7 +141,7 @@ internal static class DiagnosticsReport
         }
     }
 
-    private static void WriteDesktopAreas(StringBuilder report)
+    private static void WriteDesktopAreas(StringBuilder report, CancellationToken cancellationToken)
     {
         var areas = new List<(IntPtr Monitor, NativeMethods.MonitorInfoEx Info)>();
         NativeMethods.MonitorEnumProc callback = (monitor, _, _, _) =>
@@ -151,6 +164,7 @@ internal static class DiagnosticsReport
 
         foreach (var (monitor, info) in areas)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var bounds = info.Monitor;
             var id = ids[monitor];
             report.AppendLine(
@@ -280,9 +294,12 @@ internal static class DiagnosticsReport
 
     private static IEnumerable<ManagementBaseObject> Query(string scopePath, string query)
     {
-        var scope = new ManagementScope(scopePath);
+        var scope = new ManagementScope(scopePath, new ConnectionOptions { Timeout = WmiTimeout });
         scope.Connect();
-        using var searcher = new ManagementObjectSearcher(scope, new ObjectQuery(query));
+        using var searcher = new ManagementObjectSearcher(
+            scope,
+            new ObjectQuery(query),
+            new EnumerationOptions { Timeout = WmiTimeout, ReturnImmediately = true, Rewindable = false });
         using var results = searcher.Get();
         foreach (var item in results)
         {
