@@ -37,6 +37,7 @@ internal static class NativeMethods
     internal const uint NIIF_WARNING = 0x00000002;
     internal const int NIN_BALLOONUSERCLICK = 0x0405;
     internal const uint EDD_GET_DEVICE_INTERFACE_NAME = 0x00000001;
+    internal const uint DISPLAY_DEVICE_ACTIVE = 0x00000001;
     internal const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
     internal const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
     internal const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;

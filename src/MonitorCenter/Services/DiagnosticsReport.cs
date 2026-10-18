@@ -21,8 +21,6 @@ namespace MonitorCenter.Services;
 /// </remarks>
 internal static class DiagnosticsReport
 {
-    private const uint DisplayDeviceActive = 0x1;
-
     /// <summary>A device instance Windows made up: three hex numbers and a location, joined by '&amp;'.</summary>
     private static readonly Regex WindowsInstance = new(@"^[0-9A-F]+&[0-9A-F]+&[0-9A-F]+&[0-9A-Z_]+$", RegexOptions.IgnoreCase);
 
@@ -313,7 +311,7 @@ internal static class DiagnosticsReport
                     break;
                 }
 
-                var active = (display.StateFlags & DisplayDeviceActive) != 0 ? "active" : "not active";
+                var active = (display.StateFlags & NativeMethods.DISPLAY_DEVICE_ACTIVE) != 0 ? "active" : "not active";
                 report.AppendLine(
                     $"    display {displayIndex}: \"{display.DeviceString}\" flags=0x{display.StateFlags:X} ({active}) " +
                     MaskDeviceId(display.DeviceId));
