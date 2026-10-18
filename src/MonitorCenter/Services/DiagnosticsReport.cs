@@ -213,10 +213,11 @@ internal static class DiagnosticsReport
         NativeMethods.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, callback, IntPtr.Zero);
         GC.KeepAlive(callback);
 
-        // The same ID MonitorService gives each area; areas sharing one are merged into a single tile.
+        // The display MonitorService takes each area to show. Before 1.11.1, areas showing the same one were merged
+        // into a single tile; now the later ones get their device name added to the ID.
         var ids = areas.ToDictionary(
             area => area.Monitor,
-            area => AppId(area.Info.DeviceName));
+            area => ShownDisplayId(area.Info.DeviceName));
         var shared = FindSharedIds(ids.Values);
 
         foreach (var (monitor, info) in areas)
@@ -227,12 +228,12 @@ internal static class DiagnosticsReport
             report.AppendLine(
                 $"{info.DeviceName} bounds=({bounds.Left},{bounds.Top})-({bounds.Right},{bounds.Bottom}) " +
                 $"primary={(info.Flags & 1) != 0}");
-            report.AppendLine($"    app id={MaskDeviceId(id)}" + (shared.Contains(id) ? "  ** shared with another desktop area **" : string.Empty));
+            report.AppendLine($"    shows display={MaskDeviceId(id)}" + (shared.Contains(id) ? "  ** also taken as the display of another desktop area **" : string.Empty));
             WritePhysicalMonitors(report, monitor);
         }
     }
 
-    private static string AppId(string logicalDeviceName)
+    private static string ShownDisplayId(string logicalDeviceName)
     {
         var normalized = WmiMonitorReader.NormalizeInstanceName(MonitorService.ReadDisplayDevice(logicalDeviceName).DeviceId);
         return string.IsNullOrWhiteSpace(normalized) ? logicalDeviceName : normalized;
