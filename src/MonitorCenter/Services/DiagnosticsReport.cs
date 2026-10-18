@@ -4,6 +4,7 @@ using System.Management;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using MonitorCenter.Interop;
 using MonitorCenter.Models;
 
@@ -21,6 +22,9 @@ namespace MonitorCenter.Services;
 internal static class DiagnosticsReport
 {
     private const uint DisplayDeviceActive = 0x1;
+
+    /// <summary>A device instance Windows made up: three hex numbers and a location, joined by '&amp;'.</summary>
+    private static readonly Regex WindowsInstance = new(@"^[0-9A-F]+&[0-9A-F]+&[0-9A-F]+&[0-9A-Z_]+$", RegexOptions.IgnoreCase);
 
     /// <summary>The gap after a DDC/CI read before the next one, so the next read starts on a quiet bus.</summary>
     private static readonly TimeSpan DdcPause = TimeSpan.FromMilliseconds(300);
@@ -94,8 +98,9 @@ internal static class DiagnosticsReport
 
     /// <summary>
     /// Masks the part of a device ID that can hold a serial number. A device instance ID is enumerator, hardware ID
-    /// and instance; Windows makes the instance up, always with an '&amp;' in it, unless the device reports a unique
-    /// serial number, which is then used as the instance. Interface paths (\\?\DISPLAY#...#{guid}) are the same ID
+    /// and instance; Windows makes the instance up (for example 5&amp;31321161&amp;0&amp;UID4353), unless the device
+    /// reports a unique serial number, which is then used as the instance. Only instances in Windows' own format are
+    /// kept. Interface paths (\\?\DISPLAY#...#{guid}) are the same ID
     /// with '#' between the parts.
     /// </summary>
     internal static string MaskDeviceId(string? id)
@@ -110,7 +115,7 @@ internal static class DiagnosticsReport
             : string.Empty;
         var separator = prefix.Length > 0 && id.Contains('#') ? '#' : '\\';
         var parts = id[prefix.Length..].Split(separator);
-        if (parts.Length < 3 || parts[2].Contains('&') || parts[2].StartsWith('{'))
+        if (parts.Length < 3 || WindowsInstance.IsMatch(parts[2]) || parts[2].StartsWith('{'))
         {
             return id;
         }

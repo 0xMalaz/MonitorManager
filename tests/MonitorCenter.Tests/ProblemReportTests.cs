@@ -179,6 +179,9 @@ public sealed class ProblemReportTests
         Assert.AreEqual(
             $@"\\?\USB#VID_17E9&PID_6006#{masked}#{{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}}",
             DiagnosticsReport.MaskDeviceId(@"\\?\USB#VID_17E9&PID_6006#SN0123456789#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}"));
+        Assert.AreEqual(
+            $@"USB\VID_17E9&PID_6006\{DiagnosticsReport.MaskSerial("SN01&23")}",
+            DiagnosticsReport.MaskDeviceId(@"USB\VID_17E9&PID_6006\SN01&23"));
         Assert.AreEqual("-", DiagnosticsReport.MaskDeviceId(null));
     }
 
