@@ -59,7 +59,7 @@ public sealed class HardwareIntegrationTests
         await using var service = new MonitorService();
         var monitors = await service.DiscoverAsync();
 
-        var report = await service.RunExclusiveAsync(snapshots => DiagnosticsReport.Collect("test", snapshots));
+        var report = await DiagnosticsReport.CollectAsync("test", service, CancellationToken.None);
         TestContext.WriteLine(report);
 
         Assert.IsFalse(report.Contains("(failed:"), "A report section failed.");

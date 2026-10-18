@@ -25,45 +25,98 @@ internal static class DiagnosticsReport
     /// <summary>The gap after a DDC/CI read before the next one, so the next read starts on a quiet bus.</summary>
     private static readonly TimeSpan DdcPause = TimeSpan.FromMilliseconds(300);
 
-    /// <summary>The longest a WMI query may take, so a stuck query can't hold the displays for long.</summary>
+    /// <summary>The longest a single WMI query may take to return its results.</summary>
     private static readonly TimeSpan WmiTimeout = TimeSpan.FromSeconds(10);
 
-    /// <summary>Must run with exclusive access to the displays; see <see cref="MonitorService.RunExclusiveAsync{T}"/>.</summary>
-    /// <remarks><paramref name="cancellationToken"/> is checked between sections and between displays.</remarks>
-    public static string Collect(
+    /// <summary>Collects the whole report; cancelling it returns at once and releases the displays.</summary>
+    public static Task<string> CollectAsync(
         string appVersion,
-        IReadOnlyList<MonitorSnapshot> appView,
-        CancellationToken cancellationToken = default)
+        MonitorService monitorService,
+        CancellationToken cancellationToken) =>
+        CollectAsync(
+            token => monitorService.RunExclusiveAsync(snapshots => CollectDisplays(snapshots, token), token),
+            token => CollectFromWindows(appVersion, token),
+            cancellationToken);
+
+    /// <remarks>
+    /// The display reads need the displays to themselves. The WMI queries don't, and run apart from them: Windows'
+    /// WMI service can take minutes to answer when it's unhealthy, and a call that has started can't be stopped, so
+    /// when the report is cancelled they are left to finish in the background instead of being waited for.
+    /// </remarks>
+    internal static async Task<string> CollectAsync(
+        Func<CancellationToken, Task<string>> collectDisplays,
+        Func<CancellationToken, (string System, string Wmi)> collectFromWindows,
+        CancellationToken cancellationToken)
+    {
+        var fromWindows = Task.Run(() => collectFromWindows(cancellationToken), cancellationToken);
+        var displays = await collectDisplays(cancellationToken).ConfigureAwait(false);
+        var (system, wmi) = await fromWindows.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return system + displays + wmi;
+    }
+
+    /// <summary>The sections read from the displays; must run with exclusive access to them.</summary>
+    /// <remarks><paramref name="cancellationToken"/> is checked between sections and between displays.</remarks>
+    internal static string CollectDisplays(IReadOnlyList<MonitorSnapshot> appView, CancellationToken cancellationToken)
     {
         var report = new StringBuilder();
-        void Add(string title, Action write)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            DiagnosticsReport.Section(report, title, write);
-        }
+        Add(report, "Displays as MonitorCenter sees them", () => WriteAppView(report, appView), cancellationToken);
+        Add(report, "Desktop areas Windows reports (MonitorCenter makes one tile for each)",
+            () => WriteDesktopAreas(report, cancellationToken), cancellationToken);
+        Add(report, "Graphics outputs and the displays attached to them", () => WriteDisplayDevices(report), cancellationToken);
+        return report.ToString();
+    }
 
-        Add("System", () => WriteSystem(report, appVersion));
-        Add("Displays as MonitorCenter sees them", () => WriteAppView(report, appView));
-        Add("Desktop areas Windows reports (MonitorCenter makes one tile for each)",
-            () => WriteDesktopAreas(report, cancellationToken));
-        Add("Graphics outputs and the displays attached to them", () => WriteDisplayDevices(report));
-        Add("WMI: WmiMonitorID", () => WriteWmi(report,
+    private static (string System, string Wmi) CollectFromWindows(string appVersion, CancellationToken cancellationToken)
+    {
+        var system = new StringBuilder();
+        Add(system, "System", () => WriteSystem(system, appVersion), cancellationToken);
+
+        var report = new StringBuilder();
+        void AddWmi(string title, Action write) => Add(report, title, write, cancellationToken);
+        AddWmi("WMI: WmiMonitorID", () => WriteWmi(report,
             "SELECT InstanceName, Active, ManufacturerName, ProductCodeID, UserFriendlyName, SerialNumberID FROM WmiMonitorID",
             item => $"maker={DecodeCharacters(item["ManufacturerName"])} " +
                     $"product={DecodeCharacters(item["ProductCodeID"])} " +
                     $"name=\"{DecodeCharacters(item["UserFriendlyName"])}\" " +
                     $"serial={MaskSerial(DecodeCharacters(item["SerialNumberID"]))}"));
-        Add("WMI: WmiMonitorConnectionParams (5 HDMI, 10 DisplayPort, 11 internal DisplayPort, 0x80000000 internal)",
+        AddWmi("WMI: WmiMonitorConnectionParams (5 HDMI, 10 DisplayPort, 11 internal DisplayPort, 0x80000000 internal)",
             () => WriteWmi(report,
                 "SELECT InstanceName, Active, VideoOutputTechnology FROM WmiMonitorConnectionParams",
                 item => $"connection={FormatConnection(item["VideoOutputTechnology"])}"));
-        Add("WMI: WmiMonitorBrightness (built-in displays)", () => WriteWmi(report,
+        AddWmi("WMI: WmiMonitorBrightness (built-in displays)", () => WriteWmi(report,
             "SELECT InstanceName, Active, CurrentBrightness, Level FROM WmiMonitorBrightness",
             item => $"current={item["CurrentBrightness"]} levels={(item["Level"] as Array)?.Length ?? 0}"));
-        Add("WMI: WmiMonitorBrightnessMethods", () => WriteWmi(report,
+        AddWmi("WMI: WmiMonitorBrightnessMethods", () => WriteWmi(report,
             "SELECT InstanceName, Active FROM WmiMonitorBrightnessMethods",
             _ => string.Empty));
-        return report.ToString();
+        return (system.ToString(), report.ToString());
+    }
+
+    /// <summary>
+    /// Masks the part of a device ID that can hold a serial number. A device instance ID is enumerator, hardware ID
+    /// and instance; Windows makes the instance up, always with an '&amp;' in it, unless the device reports a unique
+    /// serial number, which is then used as the instance. Interface paths (\\?\DISPLAY#...#{guid}) are the same ID
+    /// with '#' between the parts.
+    /// </summary>
+    internal static string MaskDeviceId(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return "-";
+        }
+
+        var prefix = id.StartsWith(@"\\?\", StringComparison.Ordinal) || id.StartsWith(@"\\.\", StringComparison.Ordinal)
+            ? id[..4]
+            : string.Empty;
+        var separator = prefix.Length > 0 && id.Contains('#') ? '#' : '\\';
+        var parts = id[prefix.Length..].Split(separator);
+        if (parts.Length < 3 || parts[2].Contains('&') || parts[2].StartsWith('{'))
+        {
+            return id;
+        }
+
+        parts[2] = MaskSerial(parts[2]);
+        return prefix + string.Join(separator, parts);
     }
 
     /// <summary>Replaces a serial number with a short hash: the same display still matches across reports.</summary>
@@ -89,7 +142,7 @@ internal static class DiagnosticsReport
         foreach (var snapshot in appView)
         {
             report.AppendLine(
-                $"\"{snapshot.DisplayName}\" device={snapshot.DisplayDevice} id={snapshot.Id} " +
+                $"\"{snapshot.DisplayName}\" device={snapshot.DisplayDevice} id={MaskDeviceId(snapshot.Id)} " +
                 $"serial={MaskSerial(snapshot.Serial)}");
             report.AppendLine(
                 $"    status={snapshot.Status} control={snapshot.Backend} " +
@@ -105,8 +158,9 @@ internal static class DiagnosticsReport
             .Select(group => group.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    private static void Section(StringBuilder report, string title, Action write)
+    private static void Add(StringBuilder report, string title, Action write, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         report.AppendLine().AppendLine($"== {title}");
         try
         {
@@ -136,7 +190,7 @@ internal static class DiagnosticsReport
         {
             using (gpu)
             {
-                report.AppendLine($"Graphics: {gpu["Name"]}, driver {gpu["DriverVersion"]}, {gpu["PNPDeviceID"]}");
+                report.AppendLine($"Graphics: {gpu["Name"]}, driver {gpu["DriverVersion"]}, {MaskDeviceId(gpu["PNPDeviceID"] as string)}");
             }
         }
     }
@@ -170,7 +224,7 @@ internal static class DiagnosticsReport
             report.AppendLine(
                 $"{info.DeviceName} bounds=({bounds.Left},{bounds.Top})-({bounds.Right},{bounds.Bottom}) " +
                 $"primary={(info.Flags & 1) != 0}");
-            report.AppendLine($"    app id={id}" + (shared.Contains(id) ? "  ** shared with another desktop area **" : string.Empty));
+            report.AppendLine($"    app id={MaskDeviceId(id)}" + (shared.Contains(id) ? "  ** shared with another desktop area **" : string.Empty));
             WritePhysicalMonitors(report, monitor);
         }
     }
@@ -257,7 +311,7 @@ internal static class DiagnosticsReport
                 var active = (display.StateFlags & DisplayDeviceActive) != 0 ? "active" : "not active";
                 report.AppendLine(
                     $"    display {displayIndex}: \"{display.DeviceString}\" flags=0x{display.StateFlags:X} ({active}) " +
-                    display.DeviceId);
+                    MaskDeviceId(display.DeviceId));
             }
         }
     }
@@ -275,7 +329,7 @@ internal static class DiagnosticsReport
                 using (item)
                 {
                     any = true;
-                    report.AppendLine($"{item["InstanceName"]} active={item["Active"]} {describe(item)}".TrimEnd());
+                    report.AppendLine($"{MaskDeviceId(item["InstanceName"] as string)} active={item["Active"]} {describe(item)}".TrimEnd());
                 }
             }
         }

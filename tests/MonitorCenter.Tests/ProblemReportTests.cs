@@ -87,7 +87,7 @@ public sealed class ProblemReportTests
         cancellation.Cancel();
 
         Assert.ThrowsExactly<OperationCanceledException>(
-            () => DiagnosticsReport.Collect("1.0.0", [], cancellation.Token));
+            () => DiagnosticsReport.CollectDisplays([], cancellation.Token));
     }
 
     [TestMethod]
@@ -157,6 +157,78 @@ public sealed class ProblemReportTests
         StringAssert.Contains(text, "status=Unavailable control=None");
         StringAssert.Contains(text, "error=\"Brightness unavailable\"");
         Assert.IsFalse(text.Contains("SERIAL-1"), "The serial number must not appear in the report.");
+    }
+
+    [TestMethod]
+    [DataRow(@"DISPLAY\SAM71DC\5&31321161&0&UID4353")]
+    [DataRow(@"DISPLAY\SAM71DC\5&31321161&0&UID4355_0")]
+    [DataRow(@"\\?\DISPLAY#SAM71DC#5&31321161&0&UID4353#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}")]
+    [DataRow(@"PCI\VEN_10DE&DEV_2489&SUBSYS_663019DA&REV_A1\4&8BD6E8D&0&0008")]
+    [DataRow(@"\\.\DISPLAY1")]
+    public void DeviceIds_MadeUpByWindows_AreKept(string id)
+    {
+        Assert.AreEqual(id, DiagnosticsReport.MaskDeviceId(id));
+    }
+
+    [TestMethod]
+    public void DeviceIds_BuiltFromASerialNumber_HaveItMasked()
+    {
+        var masked = DiagnosticsReport.MaskSerial("SN0123456789");
+
+        Assert.AreEqual($@"USB\VID_17E9&PID_6006\{masked}", DiagnosticsReport.MaskDeviceId(@"USB\VID_17E9&PID_6006\SN0123456789"));
+        Assert.AreEqual(
+            $@"\\?\USB#VID_17E9&PID_6006#{masked}#{{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}}",
+            DiagnosticsReport.MaskDeviceId(@"\\?\USB#VID_17E9&PID_6006#SN0123456789#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}"));
+        Assert.AreEqual("-", DiagnosticsReport.MaskDeviceId(null));
+    }
+
+    [TestMethod]
+    public void AppView_MasksADisplayIdBuiltFromASerialNumber()
+    {
+        var report = new StringBuilder();
+        DiagnosticsReport.WriteAppView(report,
+        [
+            new MonitorSnapshot(
+                @"USB\VID_17E9&PID_6006\SN0123456789", "USB display", "USB display", null, @"\\.\DISPLAY4",
+                new DesktopBounds(0, 0, 1920, 1080), 0, 100, 50,
+                BrightnessBackendKind.None, MonitorSupportStatus.Unavailable, null)
+        ]);
+
+        Assert.IsFalse(report.ToString().Contains("SN0123456789"), "The serial number must not appear in the report.");
+    }
+
+    [TestMethod]
+    public async Task Collect_WhenCancelled_DoesNotWaitForAStuckWindowsQuery()
+    {
+        using var stuck = new ManualResetEventSlim();
+        using var cancellation = new CancellationTokenSource();
+        var collection = DiagnosticsReport.CollectAsync(
+            _ => Task.FromResult("displays"),
+            _ =>
+            {
+                stuck.Wait(TimeSpan.FromSeconds(30));
+                return ("system", "wmi");
+            },
+            cancellation.Token);
+
+        await Task.Delay(100);
+        cancellation.Cancel();
+
+        var finished = await Task.WhenAny(collection, Task.Delay(TimeSpan.FromSeconds(5)));
+        stuck.Set();
+        Assert.AreSame(collection, finished, "Collecting kept waiting after it was cancelled.");
+        await Assert.ThrowsAsync<OperationCanceledException>(() => collection);
+    }
+
+    [TestMethod]
+    public async Task Collect_PutsTheSystemFirstAndTheWmiQueriesLast()
+    {
+        var report = await DiagnosticsReport.CollectAsync(
+            _ => Task.FromResult("[displays]"),
+            _ => ("[system]", "[wmi]"),
+            CancellationToken.None);
+
+        Assert.AreEqual("[system][displays][wmi]", report);
     }
 
     [TestMethod]

@@ -160,7 +160,7 @@ public sealed class FlyoutWindowTests
         }
     }
 
-    private static ResourceDictionary LoadApplicationResources()
+    internal static ResourceDictionary LoadApplicationResources()
     {
         // Use the real resource definitions without constructing MonitorCenter.App. Its generated BAML loader
         // cannot initialize a test-assembly subclass, and pumping its dispatcher would start production services.

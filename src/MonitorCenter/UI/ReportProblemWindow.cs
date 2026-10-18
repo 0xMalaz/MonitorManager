@@ -30,17 +30,20 @@ internal sealed class ReportProblemWindow : Window
     {
         IsReadOnly = true,
         TextWrapping = TextWrapping.NoWrap,
-        MinHeight = 80,
+        Height = 220,
         FontFamily = new FontFamily("Cascadia Mono, Consolas"),
         FontSize = 11,
         HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        Margin = new Thickness(0, 6, 0, 12)
+        Margin = new Thickness(0, 6, 0, 0)
     };
-    private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 16) };
+    private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 16) };
     private readonly Button _sendButton = new() { Content = Strings.SendReport, MinWidth = 96, IsEnabled = false };
     private readonly Button _closeButton = new() { Content = Strings.Cancel, MinWidth = 96, Margin = new Thickness(0, 0, 8, 0) };
     private string? _collected;
+
+    internal Button SendButton => _sendButton;
+    internal TextBlock Status => _status;
 
     /// <param name="collect">Collects the diagnostics report.</param>
     /// <param name="send">Sends the description and the report; throws when it can't.</param>
@@ -54,13 +57,13 @@ internal sealed class ReportProblemWindow : Window
         Title = Strings.ReportProblem;
         SetResourceReference(BackgroundProperty, "WindowBackgroundBrush");
         SetResourceReference(ForegroundProperty, "PrimaryForegroundBrush");
-        // The report box takes whatever height is left, so the buttons stay on screen on small or scaled displays.
+        // Never taller than the work area: the content above the buttons scrolls instead, so the buttons stay on
+        // screen on small or scaled displays.
         var workArea = SystemParameters.WorkArea;
         Width = Math.Min(640, workArea.Width - 32);
-        Height = Math.Min(680, workArea.Height - 32);
-        MinWidth = Math.Min(420, Width);
-        MinHeight = Math.Min(400, Height);
-        ResizeMode = ResizeMode.CanResize;
+        SizeToContent = SizeToContent.Height;
+        MaxHeight = workArea.Height - 32;
+        ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         _sendButton.SetResourceReference(StyleProperty, "PrimaryButtonStyle");
@@ -73,26 +76,26 @@ internal sealed class ReportProblemWindow : Window
         buttons.Children.Add(_closeButton);
         buttons.Children.Add(_sendButton);
 
-        var layout = new Grid { Margin = new Thickness(24) };
-        UIElement[] rows =
-        [
-            intro,
-            new TextBlock { Text = Strings.ReportProblemDescription },
-            _description,
-            new TextBlock { Text = Strings.ReportProblemContents },
-            _report,
-            _status,
-            buttons
-        ];
-        for (var row = 0; row < rows.Length; row++)
+        var body = new StackPanel();
+        body.Children.Add(intro);
+        body.Children.Add(new TextBlock { Text = Strings.ReportProblemDescription });
+        body.Children.Add(_description);
+        body.Children.Add(new TextBlock { Text = Strings.ReportProblemContents });
+        body.Children.Add(_report);
+
+        var footer = new StackPanel();
+        footer.Children.Add(_status);
+        footer.Children.Add(buttons);
+        DockPanel.SetDock(footer, Dock.Bottom);
+
+        var layout = new DockPanel { Margin = new Thickness(24) };
+        layout.Children.Add(footer);
+        layout.Children.Add(new ScrollViewer
         {
-            layout.RowDefinitions.Add(new RowDefinition
-            {
-                Height = rows[row] == _report ? new GridLength(1, GridUnitType.Star) : GridLength.Auto
-            });
-            Grid.SetRow(rows[row], row);
-            layout.Children.Add(rows[row]);
-        }
+            Content = body,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        });
         Content = layout;
 
         SourceInitialized += (_, _) => ThemeManager.ApplyWindowTheme(this, NoBackdrop);
